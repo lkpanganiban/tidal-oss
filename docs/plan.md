@@ -5,7 +5,9 @@
 Compute and visualize tidal-current energy potential around the Philippines using a fully open-source geospatial and hydrodynamic modelling stack.
 
 - **Primary output:** GeoTIFF raster layer of tidal-current power density (W/m²)
-- **Modelling engine:** TELEMAC-2D (finite-element hydrodynamic solver)
+- **Modelling engine:** Thetis (Python-based 2D shallow-water solver built on Firedrake)
+- **Alternative engines:** ANUGA (pure-Python 2D solver), FVCOM (Fortran unstructured-grid model)
+- **Mesh generator:** Gmsh (open-source finite-element mesh generator)
 - **Bathymetry source:** GEBCO 2024 global grid (15 arc-second)
 - **Land boundary:** Philippines landmass shapefile (e.g., GADM)
 - **Web stack:** Flask + GeoServer + MapLibre GL JS + COG/Tile service
@@ -53,7 +55,7 @@ Compute and visualize tidal-current energy potential around the Philippines usin
 1. Go to **[gadm.org/download_country_v3.html](https://gadm.org/download_country_v3.html)**
 2. Select **Philippines** from the country dropdown, choose **Shapefile** format, click *Download*.
 3. This gives you `gadm41_PHL_shp.zip` containing `gadm41_PHL_0.shp` (national boundary), `gadm41_PHL_1.shp` (regions), `gadm41_PHL_2.shp` (provinces).
-4. Use `gadm41_PHL_0.shp` as the landmass boundary for your TELEMAC mesh.
+4. Use `gadm41_PHL_0.shp` as the landmass boundary for mesh generation.
 
 **Option B — Geofabrik OSM extract:**
 ```bash
@@ -75,318 +77,341 @@ unzip philippines-latest-free.shp.zip
 
 ### 2.3 Prepared Data Summary Table
 
-| Dataset | Download Link | Post-Download Script | Final File in `telemac_data/` |
-|---------|---------------|---------------------|-------------------------------|
-| Bathymetry | [GEBCO 2024](https://www.gebco.net/data_and_products/gridded_bathymetry_data/gebco_2024/) | `gdal_translate` clip | `mesh/geo_philippines.slf` (after mesh interpolation) |
-| Landmass | [GADM](https://gadm.org/download_country_v3.html), [Geofabrik](https://download.geofabrik.de/asia/philippines.html) | QGIS simplify → BlueKenue import | Ingested into mesh as solid boundary nodes |
-| Tidal BC | [AVISO FES2014](https://www.aviso.altimetry.fr/en/data/products/auxiliary-products/global-tide-fes.html), [TPXO](https://www.tpxo.net/) | `prepare_bc.py` | `mesh/bnd_philippines.cli` |
-| Manning's n | [Manning n lookup table](https://www.hec.usace.army.mil/confluence/rasdocs/ras1dtechref/6.3/steady-flow-computations/energy-losses/roughness-factors/manning-s-n-values) | Constant or raster assignment | `mesh/fonsim_philippines.slf` (optional) |
+| Dataset | Download Link | Post-Download Script | Final File in `simulation_data/` |
+|---------|---------------|---------------------|-----------------------------------|
+| Bathymetry | [GEBCO 2024](https://www.gebco.net/data_and_products/gridded_bathymetry_data/gebco_2024/) | `gdal_translate` clip | `bathymetry/gebco_philippines.tif` (raster for mesh interpolation) |
+| Landmass | [GADM](https://gadm.org/download_country_v3.html), [Geofabrik](https://download.geofabrik.de/asia/philippines.html) | QGIS simplify → Gmsh ingestion | Ingested into Gmsh mesh as physical curves (solid boundary) |
+| Tidal BC | [AVISO FES2014](https://www.aviso.altimetry.fr/en/data/products/auxiliary-products/global-tide-fes.html), [TPXO](https://www.tpxo.net/) | `prepare_bc.py` | `input/tidal_forcing.py` (Python callable for Thetis) |
+| Manning's n | [Manning n lookup table](https://www.hec.usace.army.mil/confluence/rasdocs/ras1dtechref/6.3/steady-flow-computations/energy-losses/roughness-factors/manning-s-n-values) | Constant or raster assignment | `input/manning_field.tif` (optional) |
 
 ---
 
-## 3. Phase A — Hydrodynamic Modelling (TELEMAC + QGIS)
+## 3. Phase A — Hydrodynamic Modelling (Gmsh + Thetis)
 
-### 3.1 Mesh Generation (QGIS + BlueKenue / SMS-compatible)
+### 3.1 Why Thetis Over TELEMAC-2D
 
-1. **Clip GEBCO** to the Philippine maritime domain (bounding box ~ 4°–22°N, 116°–130°E).
-2. **Import land shapefile** into QGIS — simplify geometry to 500–1000 m tolerance.
-3. **Define open-boundary arcs** along the edges of the computational domain (Pacific Ocean, South China Sea, Sulu Sea, Celebes Sea).
-4. **Generate unstructured triangular mesh** using:
-   - **BlueKenue** (free mesh generator) for refined coastal areas.
-   - Alternative: **Gmsh** or **OceanMesh2D** (MATLAB/GNU Octave) if available.
-5. **Interpolate GEBCO depths** onto mesh nodes; enforce minimum depth (e.g., 2 m to avoid wetting/drying instability).
-6. **Assign node strings** (solid boundaries = land, liquid boundaries = open ocean).
+| Aspect | TELEMAC-2D | Thetis |
+|--------|-----------|--------|
+| Language | Fortran 90 + Python wrappers | Python (Firedrake/UFL backend) |
+| Installation | Complex: build from source with MPI, HDF5, METIS, MED; requires systel config | `pip install thetis` (Firedrake via conda-forge or pip) |
+| Mesh input | Selafin (`.slf`) via BlueKenue | Standard Gmsh (`.msh`) files |
+| Configuration | `cas` steering file (proprietary format) | Python script (native Python syntax) |
+| Boundary conditions | `cli` / conlim binary files | Python callables — define as functions |
+| Post-processing | Selafin → NetCDF via converter tools | Direct HDF5/XDMF/VTU output |
+| Learning curve | Steep — domain-specific tooling (BlueKenue, BK, Janet) | Moderate — standard Python + Firedrake API |
+| Parallelism | OpenMPI (manual ncsize flag) | Automatic via PETSc backend |
+| Wetting/drying | Built-in with tuning | Built-in (`WettingDrying` solver parameter) |
 
-### 3.2 Boundary Condition Preparation
+**Alternative fallback — ANUGA:** If Thetis is unavailable or the mesh is small, ANUGA provides an even simpler pure-Python 2D solver. It uses its own mesh generator rather than Gmsh by default, but `meshio` + `Gmsh` output can be converted. ANUGA is best for smaller domains (e.g., single strait/channel) due to performance constraints.
 
-- Extract tidal harmonics (M2, S2, K1, O1 at minimum) from FES2014 or TPXO9 at each open-boundary node.
-- Write time-series water-level BC files using Python (`pandas` + `numpy` + `xarray`).
-- Convert to TELEMAC liquid boundary format (`cli` file or conlim format).
+### 3.2 Mesh Generation with Gmsh
 
-### 3.3 Docker Setup for TELEMAC-2D
+Gmsh generates the computational mesh from the Philippines shapefile boundary and domain extents.
 
-TELEMAC-2D has complex Fortran/C/Python dependencies (MPI, METIS, HDF5, MED). A Docker container eliminates platform-specific build issues and ensures reproducibility.
+#### 3.2.1 Workflow
 
-#### 3.3.1 Project Directory Structure After Setup
+1. **Define domain bounding box** in QGIS: 4°–22°N, 116°–130°E.
+2. **Extract landmask from GADM shapefile**: clip the shapefile to the domain extent, simplify geometry to 250–500 m tolerance (use QGIS *Simplify* or `ogr2ogr -simplify`).
+3. **Write Gmsh `.geo` script** that:
+   - Defines the outer open-boundary polygon (domain edges).
+   - Embeds the landmass polygon(s) as holes / solid boundaries.
+   - Assigns physical group tags: `1` = open ocean boundaries, `2` = land boundaries, `3` = domain interior.
+   - Sets mesh size fields: coarser (~5–10 km) in deep ocean, finer (~500 m–2 km) near coastlines and straits.
+4. **Generate the mesh**:
+   ```bash
+   gmsh -2 -format msh2 mesh_philippines.geo -o mesh_philippines.msh
+   ```
+   - `-2`: 2D mesh (triangular elements).
+   - `-format msh2`: compatible with `meshio` / Firedrake reader.
+   - Optionally use `-algo` flags to set Delaunay (`-algo meshadapt`) or Frontal-Delaunay (`-algo del2d`).
+
+#### 3.2.2 Gmsh `.geo` Script Template
+
+```c
+// mesh_philippines.geo
+// Outer domain boundary (ocean): 116°–130°E, 4°–22°N
+lc_ocean = 0.1;   // ~10 km at equator
+lc_coast = 0.005; // ~500 m near land
+
+Point(1) = {116, 4,  0, lc_ocean};
+Point(2) = {130, 4,  0, lc_ocean};
+Point(3) = {130, 22, 0, lc_ocean};
+Point(4) = {116, 22, 0, lc_ocean};
+
+Line(1) = {1, 2}; Line(2) = {2, 3};
+Line(3) = {3, 4}; Line(4) = {4, 1};
+
+Curve Loop(1) = {1, 2, 3, 4};
+
+// Import simplified land boundary (pre-saved as a Gmsh-compatible polygon)
+// Use QGIS or ogr2ogr to convert shapefile to Gmsh point/line format
+// ... land boundary points and lines with lc_coast ...
+
+Plane Surface(1) = {1};  // outer boundary minus land holes
+
+Physical Curve(1) = {1, 2, 3, 4};  // open ocean boundaries (tag: 1)
+Physical Curve(2) = {/* land line IDs */};  // land boundaries (tag: 2)
+Physical Surface(3) = {1};          // domain interior (tag: 3)
+```
+
+#### 3.2.3 Interpolate Bathymetry onto Mesh Nodes
+
+After mesh generation, interpolate GEBCO depths onto each mesh node using Python:
+
+```python
+import meshio
+import rioxarray
+from scipy.interpolate import RegularGridInterpolator
+
+mesh = meshio.read("mesh_philippines.msh")
+nodes = mesh.points[:, :2]  # lon, lat
+
+gebco = rioxarray.open_rasterio("gebco_philippines.tif").squeeze()
+interp = RegularGridInterpolator(
+    (gebco.y.values[::-1], gebco.x.values),
+    gebco.values[::-1, :],
+    bounds_error=False, fill_value=None
+)
+depths = interp(nodes[:, ::-1])  # flip to (lat, lon) if needed
+depths = np.maximum(depths, 2.0)  # enforce minimum depth (2 m)
+
+np.savetxt("input/bathymetry_nodes.csv", depths, delimiter=",")
+```
+
+### 3.3 Thetis Setup & Configuration
+
+Thetis is a Python library — no Docker build stage or Fortran compilation needed. A lightweight Docker container (or conda env) with Firedrake is sufficient.
+
+#### 3.3.1 Environment Setup
+
+**Option A — Conda (recommended for macOS/Linux):**
+```bash
+conda create -n thetis_env python=3.11
+conda activate thetis_env
+conda install -c conda-forge firedrake
+pip install thetis meshio rioxarray xarray scipy
+```
+
+**Option B — Pip (for Docker, see 3.3.2):**
+```bash
+pip install firedrake thetis meshio rioxarray xarray scipy
+# Note: Firedrake requires PETSc — use the firedrake-install script if pip fails
+curl -O https://raw.githubusercontent.com/firedrakeproject/firedrake/master/scripts/firedrake-install
+python3 firedrake-install
+```
+
+#### 3.3.2 Project Directory Structure
 
 ```
 project/
-├── docker/
-│   └── Dockerfile.telemac
-├── telemac_data/            # All simulation I/O — mounted into the container
+├── simulation_data/
 │   ├── mesh/
-│   │   ├── geo_philippines.slf   # BlueKenue/Gmsh mesh (Selafin geometry)
-│   │   ├── bnd_philippines.cli   # Boundary conditions file
-│   │   └── fonsim_philippines.slf # Friction/Manning field (optional)
+│   │   ├── mesh_philippines.geo    # Gmsh geometry script
+│   │   └── mesh_philippines.msh    # Generated mesh
+│   ├── bathymetry/
+│   │   ├── gebco_philippines.tif   # Clipped GEBCO raster
+│   │   └── bathymetry_nodes.csv    # Interpolated depths at nodes
 │   ├── input/
-│   │   └── cas_philippines.cas   # TELEMAC steering file
-│   ├── output/                   # Container writes results here
+│   │   ├── tidal_forcing.py        # Tidal BC function (Python callable)
+│   │   ├── manning_field.tif       # Manning's n raster (optional)
+│   │   └── run_thetis.py           # Main simulation script
+│   ├── output/                     # Simulation results written here
 │   └── scripts/
-│       └── prepare_bc.py         # Python script to generate .cli from FES2014
+│       ├── prepare_bc.py           # Extract tidal harmonics from FES2014/TPXO
+│       └── mesh_interpolate.py     # Interpolate GEBCO onto mesh
+├── docker/
+│   └── Dockerfile.thetis
 ├── docker-compose.yml
 └── Makefile
 ```
 
-#### 3.3.2 Dockerfile for TELEMAC-2D
-
-Create `docker/Dockerfile.telemac`:
+#### 3.3.3 Dockerfile for Thetis
 
 ```dockerfile
-# Build stage — compile TELEMAC from source
-FROM ubuntu:22.04 AS builder
+FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
-    TZ=Etc/UTC
+    FIREDRAKE_DIR=/opt/firedrake
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    gfortran \
-    python3 \
-    python3-dev \
-    python3-pip \
-    python3-numpy \
-    cmake \
-    git \
-    wget \
-    libopenmpi-dev \
-    openmpi-bin \
-    libhdf5-dev \
-    libhdf5-openmpi-dev \
-    libmetis-dev \
-    libscotch-dev \
-    liblapack-dev \
-    libblas-dev \
-    zlib1g-dev \
+    python3 python3-pip python3-dev \
+    build-essential gfortran \
+    libopenmpi-dev openmpi-bin \
+    liblapack-dev libblas-dev \
+    git curl wget \
     && rm -rf /var/lib/apt/lists/*
 
-# --- Step 1: Download TELEMAC v8p5r0 ---
-WORKDIR /opt
-RUN wget -q https://gitlab.pam-retd.fr/otm/telemac-mascaret/-/archive/v8p5r0/telemac-mascaret-v8p5r0.tar.gz \
-    && tar xzf telemac-mascaret-v8p5r0.tar.gz \
-    && mv telemac-mascaret-v8p5r0 telemac \
-    && rm telemac-mascaret-v8p5r0.tar.gz
+# Install Firedrake + Thetis via the firedrake-install script
+RUN curl -O https://raw.githubusercontent.com/firedrakeproject/firedrake/master/scripts/firedrake-install \
+    && python3 firedrake-install --install thetis --honour-pythonpath
 
-# --- Step 2: Write systel.cfg for gfortran + OpenMPI ---
-# Adjust paths to match your container layout.
-RUN mkdir -p /opt/telemac/configs && cat > /opt/telemac/configs/systel_ubuntu.cfg << 'SYSTEL'
-# Configuration for Ubuntu 22.04 + gfortran + OpenMPI
-[general]
-sfx_zip: .gztar
-sfx_lib: .a
-sfx_obj: .o
-sfx_mod: .mod
-sfx_exe:
-val_inc: -I
-val_mod: -I
-modules:    all
-python:     python3
-python_ext: python3
-sr_root:    /opt/telemac
-root:       /opt/telemac
-version:    v8p5
+# Ensure Firedrake virtualenv is active
+RUN echo "source /opt/firedrake/bin/activate" >> ~/.bashrc
 
-[sfx_lib]
-sfx_lib: .a
-sfx_obj: .o
+# Install additional Python packages for data processing
+RUN /opt/firedrake/bin/python -m pip install meshio rioxarray xarray scipy gdal
 
-[ubuntu]
-brief:      GNU gfortran + OpenMPI on Ubuntu
-compilers:  gfortran
-mpi_cmds:   mpif90,mpirun
-cmd_obj:    gfortran -c -O3 -fconvert=big-endian -frecord-marker=4 -fPIC -cpp <mods> <incs> <f95name>
-cmd_lib:    ar cru <libname> <objs>
-cmd_exe:    mpif90 -fconvert=big-endian -frecord-marker=4 -fPIC -o <exename> <objs> <libs> -L/usr/lib/x86_64-linux-gnu/hdf5/openmpi -lhdf5_fortran -lhdf5 -lmetis -lz -ldl
-incs_all:   -I/usr/lib/x86_64-linux-gnu/fortran/gfortran/module_files/openmpi
-libs_all:   -L/usr/lib/x86_64-linux-gnu/hdf5/openmpi -lhdf5_fortran -lhdf5 -lmetis -lz -ldl
-SYSTEL
-
-# --- Step 3: Compile TELEMAC-2D ---
-WORKDIR /opt/telemac
-RUN python3 config.py --configs-path=configs --config=ubuntu \
-    && python3 compile_telemac.py -m telemac2d
-
-# --- Runtime stage — slim image with only what's needed ---
-FROM ubuntu:22.04 AS runtime
-
-ENV DEBIAN_FRONTEND=noninteractive
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 \
-    python3-numpy \
-    libopenmpi3 \
-    libhdf5-openmpi-103 \
-    libmetis5 \
-    libscotch-6.0 \
-    liblapack3 \
-    libblas3 \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy compiled binaries and scripts from builder
-COPY --from=builder /opt/telemac /opt/telemac
-
-ENV HOMETEL=/opt/telemac
-ENV PATH=$HOMETEL/scripts/python3:$HOMETEL/builds/ubuntu/bin:$PATH
-ENV PYTHONPATH=$HOMETEL/scripts/python3:$PYTHONPATH
-ENV LD_LIBRARY_PATH=$HOMETEL/builds/ubuntu/lib:$HOMETEL/builds/ubuntu/wrap/lib:$LD_LIBRARY_PATH
-
-# Entrypoint script so the user can pass telemac2d.py arguments
-RUN echo '#!/bin/bash\n\
-exec python3 "$@"' > /entrypoint.sh && chmod +x /entrypoint.sh
-
-ENTRYPOINT ["/entrypoint.sh"]
-CMD ["--help"]
+WORKDIR /data
+ENV PATH="/opt/firedrake/bin:$PATH"
 ```
 
-#### 3.3.3 Build the TELEMAC Docker Image
-
+Build the image:
 ```bash
-# From the project root:
-mkdir -p docker telemac_data/{mesh,input,output,scripts}
-
-# Build (takes 15–45 min depending on hardware)
-docker build \
-  -t telemac2d:v8p5 \
-  -f docker/Dockerfile.telemac \
-  .
-
-# Verify
-docker run --rm telemac2d:v8p5 $HOMETEL/scripts/python3/telemac2d.py --help
+docker build -t thetis:v1 -f docker/Dockerfile.thetis .
 ```
 
-#### 3.3.4 Verify the TELEMAC Config Inside the Container
+#### 3.3.4 Simulation Script (`run_thetis.py`)
 
+```python
+import numpy as np
+from thetis import *
+from firedrake import *
+
+# ---- 1. Read mesh ----
+mesh2d = Mesh("mesh/mesh_philippines.msh")
+
+# ---- 2. Bathymetry ----
+# Load pre-interpolated depths from CSV
+depth_data = np.loadtxt("bathymetry/bathymetry_nodes.csv")
+P1_2d = FunctionSpace(mesh2d, "CG", 1)
+bathymetry = Function(P1_2d, name="Bathymetry")
+bathymetry.dat.data[:] = depth_data
+
+# ---- 3. Setup solver ----
+solver_obj = solver2d.FlowSolver2d(mesh2d, bathymetry)
+options = solver_obj.options
+options.simulation_export_time = 1800.0        # export every 30 min
+options.simulation_end_time = 30 * 24 * 3600   # 30 days
+options.timestepper_type = "CrankNicolson"
+options.timestep = 300.0                       # 5 min timestep
+options.output_directory = "output"
+
+# Enable wetting & drying
+options.wetting_and_drying = True
+
+# Turbulence: Smagorinsky
+options.use_smagorinsky_viscosity = True
+options.smagorinsky_coefficient = Constant(0.1)
+
+# Bottom friction: Manning's n
+manning = Function(P1_2d, name="Manning")
+manning.assign(Constant(0.025))  # constant value; or interpolate from raster
+options.manning_drag_coefficient = manning
+
+# ---- 4. Boundary conditions ----
+# Physical tags from Gmsh: 1 = open ocean, 2 = land
+# Tide forcing function (see tidal_forcing.py)
+from tidal_forcing import tidal_elevation
+
+solver_obj.bnd_functions["shallow_water"] = {
+    1: {"elev": tidal_elevation},   # open boundary: prescribed tidal elevation
+    2: {"un": Constant(0.0)}        # land boundary: no-normal flow
+}
+
+# ---- 5. Initial condition (cold start) ----
+solver_obj.assign_initial_conditions(elev=Constant(0.0), uv=Constant((0.0, 0.0)))
+
+# ---- 6. Run ----
+solver_obj.iterate()
+```
+
+#### 3.3.5 Tidal Boundary Condition Script (`tidal_forcing.py`)
+
+```python
+import numpy as np
+import xarray as xr
+from firedrake import Constant, exprc
+from ufl import sin, cos
+
+# Tidal constituents extracted from FES2014 or TPXO9 via prepare_bc.py
+# Each tuple: (name, amplitude_m, phase_deg, angular_speed_rad_s)
+CONSTITUENTS = {
+    "M2": ("M2", 0.52, 120.0, 1.405189e-04),
+    "S2": ("S2", 0.23, 145.0, 1.454441e-04),
+    "K1": ("K1", 0.31, 210.0, 7.292116e-05),
+    "O1": ("O1", 0.25, 195.0, 6.759774e-05),
+}
+
+def tidal_elevation(x, y, t):
+    """Return tidal elevation (m) at boundary node (x, y) and time t."""
+    eta = 0.0
+    for name, amp, phase_deg, omega in CONSTITUENTS.values():
+        phase_rad = np.deg2rad(phase_deg)
+        eta += amp * cos(omega * t - phase_rad)
+    return eta
+```
+
+#### 3.3.6 Run Thetis
+
+**Local (conda env):**
 ```bash
-docker run --rm telemac2d:v8p5 \
-  python3 -c "import os; print(os.environ.get('HOMETEL'))"
-# Expected: /opt/telemac
+conda activate thetis_env
+cd simulation_data
+python input/run_thetis.py
 ```
 
-#### 3.3.5 Prepare the Simulation Input Files
-
-Place the following inside `telemac_data/` (generate via QGIS/BlueKenue/prepare_bc.py):
-
-| File | Description |
-|------|-------------|
-| `mesh/geo_philippines.slf` | Unstructured mesh geometry (nodes, elements, depths) |
-| `mesh/bnd_philippines.cli` | Tidal liquid-boundary time series |
-| `input/cas_philippines.cas` | TELEMAC steering (cas) file — see section 3.4 |
-
-#### 3.3.6 Run TELEMAC-2D Simulation Inside Docker
-
-**Single-core run (testing):**
+**Docker:**
 ```bash
-docker run --rm \
-  -v "$(pwd)/telemac_data:/data" \
-  -w /data/input \
-  telemac2d:v8p5 \
-  $HOMETEL/scripts/python3/telemac2d.py cas_philippines.cas
+docker run --rm -it \
+  -v "$(pwd)/simulation_data:/data" \
+  -w /data \
+  thetis:v1 \
+  python input/run_thetis.py
 ```
 
-**Multi-core run with OpenMPI (e.g., 8 cores):**
+**Multi-core (Docker with MPI):**
 ```bash
-docker run --rm \
-  -v "$(pwd)/telemac_data:/data" \
-  -w /data/input \
-  telemac2d:v8p5 \
-  $HOMETEL/scripts/python3/telemac2d.py cas_philippines.cas --ncsize=8
+docker run --rm -it \
+  -v "$(pwd)/simulation_data:/data" \
+  -w /data \
+  --cpus=8 --memory=32g --shm-size=2g \
+  thetis:v1 \
+  mpirun -np 8 python input/run_thetis.py
 ```
 
-**Tips for large simulations:**
-- Add `--memory=32g` and `--cpus=8` to Docker flags to avoid OOM.
-- Map output to a fast NVMe volume: `-v /mnt/fast_ssd:/data/output`.
-- Use `--shm-size=2g` if you experience MPI shared-memory errors.
+#### 3.3.7 Inspect Results
 
-#### 3.3.7 Run Using Docker Compose (Recommended for Repeatability)
-
-Add to `docker-compose.yml`:
-
-```yaml
-services:
-  telemac2d:
-    image: telemac2d:v8p5
-    entrypoint: /entrypoint.sh
-    command: >
-      $HOMETEL/scripts/python3/telemac2d.py
-      /data/input/cas_philippines.cas
-      --ncsize=${TELEMAC_NPROCS:-4}
-    volumes:
-      - ./telemac_data:/data
-    working_dir: /data/input
-    environment:
-      - OMPI_MCA_btl_vader_single_copy_mechanism=none
-    deploy:
-      resources:
-        limits:
-          cpus: "${TELEMAC_NPROCS:-4}"
-          memory: 32g
-    profiles:
-      - simulation   # Only starts when explicitly requested
-```
-
-Run with:
+Results are HDF5 files in `output/`:
 ```bash
-TELEMAC_NPROCS=8 docker compose --profile simulation up telemac2d
+ls -lh simulation_data/output/
+# hdf5/ directory containing elevation and velocity time-series
+# diagnostics/ with energy, volume conservation, etc.
 ```
 
-#### 3.3.8 Inspect Results
-
-Results are written to the configured output directory (set in `.cas` as `RESULTS FILE FORMAT` / `RESULTS FILE`). Typically a Selafin file (`.slf`):
-
+Convert to NetCDF for GIS:
 ```bash
-ls -lh telemac_data/output/
-# r2d_philippines.slf       # simulation results (2D)
-# r2d_philippines_VR.slf    # validation run (if enabled)
+python scripts/export_to_netcdf.py output/hdf5 output/results.nc
 ```
 
-Convert to NetCDF for further analysis:
-```bash
-docker run --rm \
-  -v "$(pwd)/telemac_data:/data" \
-  telemac2d:v8p5 \
-  python3 $HOMETEL/scripts/python3/convert_telemac_file.py \
-    /data/output/r2d_philippines.slf \
-    /data/output/r2d_philippines.nc
-```
+### 3.4 Simulation Parameters
 
-#### 3.3.9 Troubleshooting Common Docker-TELEMAC Issues
-
-| Symptom | Likely Cause | Fix |
-|---------|-------------|-----|
-| `ImportError: No module named 'telemac'` | PYTHONPATH not set | Verify `ENV PYTHONPATH` in Dockerfile |
-| `mpirun: command not found` | MPI runtime missing | Add `libopenmpi3` to runtime stage |
-| `libhdf5_fortran.so: cannot open` | HDF5 linker path mismatch | Adjust `libs_all` in `systel_ubuntu.cfg` |
-| `Segmentation fault` during init | Insufficient shm for MPI | Add `--shm-size=2g` to `docker run` |
-| Mesh file not found | Path in `.cas` is absolute or mismatches mount | Use paths relative to `/data` in `.cas` |
-| `BUILD FAILED` | systel config wrong for this Ubuntu version | Run `find /usr -name "hdf5.mod"` inside builder, update `incs_all` |
-
----
-
-### 3.4 TELEMAC-2D Simulation Parameters
-
-- **Solver:** TELEMAC-2D (depth-averaged, non-hydrostatic if needed).
+- **Solver:** Thetis 2D shallow-water (depth-averaged, non-hydrostatic if needed).
+- **Mesh:** Gmsh-generated unstructured triangular mesh; refined at coastlines/straits (500 m–2 km), coarse offshore (5–10 km).
 - **Simulation period:** ≥ 30 days (two spring-neap cycles) for representative tidal energy assessment.
-- **Time step:** CFL-limited, typically 60–300 s depending on mesh resolution.
-- **Key parameters in `cas` file:**
+- **Time step:** CFL-limited, typically 150–600 s depending on mesh resolution.
+- **Key parameters in `run_thetis.py`:**
+  ```python
+  options.timestepper_type = "CrankNicolson"   # semi-implicit, stable
+  options.use_smagorinsky_viscosity = True      # turbulence closure
+  options.wetting_and_drying = True             # tidal flats
+  options.manning_drag_coefficient = manning    # bottom friction
+  options.simulation_end_time = 30 * 24 * 3600  # 30 days
   ```
-  HYDRODYNAMIC LAW = 3 (k-epsilon) or 4 (Smagorinsky)
-  TIDAL FLATS     = YES
-  OPTION FOR LIQUID BOUNDARIES = 1 (prescribed elevation)
-  DURATION        = 2592000  (30 days in seconds)
-  ```
-- **Parallel execution:** `telemac2d.py cas_file.cas --ncsize=8` (via Docker as described in 3.3.6)
+- **Parallel execution:** Via PETSc backend — `mpirun -np 8 python run_thetis.py` (see 3.3.6).
 
 ### 3.5 Post-Processing & TIFF Generation
 
-1. Convert TELEMAC result file (`slf` / Selafin) to NetCDF using `telemac2d.py` post-processing tools or `pytel` / `vtk2nc`.
+1. Read Thetis HDF5 output using `xarray` or `h5py`.
 2. Extract depth-averaged velocity time series (u, v) at each mesh node.
 3. Compute **tidal-current power density**:
    ```
    P = 0.5 * ρ * u³       [W/m²]
    where ρ = 1025 kg/m³ (seawater density)
+   u = sqrt(u² + v²)      (velocity magnitude)
    ```
 4. Time-average P over the full simulation period.
 5. **Rasterize** the unstructured mesh result onto a regular grid (e.g., 500 m pixel):
-   - Use `scipy.interpolate.griddata` or `gdal_grid`.
+   - Use `scipy.interpolate.griddata` (linear interpolation) or `gdal_grid` (inverse-distance weighting).
    - Output as **Cloud-Optimized GeoTIFF (COG)** with EPSG:4326.
 6. Optional: Compute additional metrics — available power density (95th percentile), capacity factor.
 
@@ -451,22 +476,16 @@ docker run --rm \
 ```yaml
 services:
   # ==== Phase A: Hydrodynamic Simulation ====
-  telemac2d:
-    image: telemac2d:v8p5
-    entrypoint: /entrypoint.sh
-    command: >
-      $HOMETEL/scripts/python3/telemac2d.py
-      /data/input/cas_philippines.cas
-      --ncsize=${TELEMAC_NPROCS:-4}
+  thetis:
+    image: thetis:v1
+    command: python /data/input/run_thetis.py
     volumes:
-      - ./telemac_data:/data
-    working_dir: /data/input
-    environment:
-      - OMPI_MCA_btl_vader_single_copy_mechanism=none
+      - ./simulation_data:/data
+    working_dir: /data
     deploy:
       resources:
         limits:
-          cpus: "${TELEMAC_NPROCS:-4}"
+          cpus: "8"
           memory: 32g
     shm_size: "2gb"
     profiles:
@@ -483,7 +502,7 @@ services:
       - "8080:8080"
     volumes:
       - ./geoserver_data:/opt/geoserver_data
-      - ./telemac_data/output:/opt/geoserver_data/data/phil_tidal_energy
+      - ./simulation_data/output:/opt/geoserver_data/data/phil_tidal_energy
 
   flask-api:
     build:
@@ -492,7 +511,7 @@ services:
     ports:
       - "5000:5000"
     volumes:
-      - ./telemac_data/output:/data
+      - ./simulation_data/output:/data
     environment:
       - FLASK_ENV=development
       - OUTPUT_DIR=/data
@@ -516,17 +535,28 @@ services:
 
 | Tool | Version | Purpose |
 |------|---------|---------|
+| Gmsh | 4.12+ | Unstructured triangular mesh generation from shapefile boundaries |
+| Gmsh Python API (`gmsh`) | 4.12+ | Programmatic mesh generation (optional — for Python-driven `.geo` creation) |
 | QGIS | 3.34+ LTR | Pre-processing, shapefile handling, mesh visualisation |
-| BlueKenue / Gmsh | Latest | Unstructured mesh generation |
-| TELEMAC-2D | v8p5r0 | Hydrodynamic simulation (containerized) |
-| Python | 3.10+ | Data prep, post-processing, Flask API |
+| Thetis / Firedrake | Latest | 2D shallow-water hydrodynamic simulation |
+| Python | 3.10+ | Data prep, post-processing, Flask API, simulation scripting |
+| `meshio` | — | Convert/read Gmsh mesh files and VTU output |
 | `xarray`, `rioxarray` | — | NetCDF/GeoTIFF I/O |
-| `scipy` | — | Interpolation |
+| `scipy` | — | Interpolation, bathymetry sampling |
 | `gdal` | 3.8+ | Raster IO, COG creation |
 | GeoServer | 2.25.2+ | WMS/WMTS tile serving |
 | MapLibre GL JS | 4.x | Browser-based interactive map |
-| Docker | 24+ | Container runtime for TELEMAC and all services |
+| Docker | 24+ | Container runtime (optional; Thetis can run directly via conda/pip) |
 | Docker Compose | v2+ | Multi-service orchestration |
+
+### 5.1 Engine Alternatives Comparison
+
+| Engine | Language | Gmsh Support | Complexity | Best For |
+|--------|----------|-------------|------------|----------|
+| **Thetis** | Python (Firedrake) | Native | Moderate | Regional-to-coastal 2D tidal models |
+| **ANUGA** | Python | Via meshio conversion | Low | Small domains, rapid prototyping |
+| **FVCOM** | Fortran 90 | Via SMS / OceanMesh2D | High | Estuarine/coastal with wetting-drying |
+| **SCHISM** | Fortran 90 | Via SMS | High | Multi-scale 3D baroclinic |
 
 ---
 
@@ -535,8 +565,8 @@ services:
 | Phase | Duration (est.) | Deliverables |
 |-------|-----------------|--------------|
 | 1. Data acquisition & pre-processing | 1–2 weeks | Clipped GEBCO, simplified shoreline, open-boundary definition |
-| 2. Mesh generation | 1–2 weeks | Unstructured mesh with bathymetry, boundary-node strings |
-| 3. TELEMAC setup & simulation | 2–3 weeks | Calibrated model, validated tidal output |
+| 2. Mesh generation (Gmsh) | 1–2 weeks | Unstructured mesh with bathymetry, boundary physical tags |
+| 3. Thetis setup & simulation | 2–3 weeks | Calibrated model, validated tidal output |
 | 4. Post-processing & COG creation | 1 week | GeoTIFF of mean tidal-current power density |
 | 5. GeoServer configuration | 0.5 week | Published WMS/WMTS layers with SLD styling |
 | 6. Flask API | 0.5 week | REST endpoints for metadata, query, download |
@@ -548,17 +578,18 @@ services:
 
 ## 7. Validation & Quality Assurance
 
-- Compare TELEMAC water levels with tide-gauge data (e.g., NAMRIA stations, IOC sea-level network).
+- Compare Thetis water levels with tide-gauge data (e.g., NAMRIA stations, IOC sea-level network).
 - Validate depth-averaged currents against published ADCP campaign data or TPXO predictions.
 - Cross-check power-density hotspots against known tidal-energy sites (e.g., San Bernardino Strait, Surigao Strait).
-- Peer-review mesh convergence by refining resolution in high-gradient areas.
+- Mesh convergence study: refine resolution in high-gradient areas and confirm results stabilize.
 
 ---
 
 ## 8. Future Extensions
 
-- Add TELEMAC-3D for vertical velocity profiling.
-- Integrate wave-current interaction (TOMAWAC coupling).
+- Add 3D baroclinic effects via Firedrake extensions or switch to SCHISM/FVCOM.
+- Integrate wave-current interaction (custom coupling or switch to COAWST/Delft3D).
 - Extend to the entire Coral Triangle / ASEAN region.
 - Add economic site-screening module (depth filter, distance-to-grid, shipping-lane exclusion).
 - Real-time tidal forecast using live boundary-condition feeds.
+- Automated mesh generation from GADM shapefile via the Gmsh Python API (`gmsh.model.geo`).

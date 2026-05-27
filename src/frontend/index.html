@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Philippine Tidal Current Energy Assessment</title>
+    <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="sidebar">
+        <h1>Philippine Tidal Energy</h1>
+        <p class="subtitle">Time-averaged tidal-current power density (W/m²)</p>
+
+        <div id="legend">
+            <h3>Power Density (W/m²)</h3>
+            <div class="legend-bar"></div>
+            <div class="legend-labels">
+                <span>0</span>
+                <span>200</span>
+                <span>400</span>
+                <span>800</span>
+                <span>1600+</span>
+            </div>
+        </div>
+
+        <div id="layer-controls">
+            <h3>Layers</h3>
+            <label class="toggle">
+                <input type="checkbox" id="toggle-power" checked>
+                <span>Tidal Power Density</span>
+            </label>
+            <div class="opacity-slider">
+                <label for="opacity">Opacity</label>
+                <input type="range" id="opacity" min="0" max="100" value="70">
+            </div>
+        </div>
+
+        <div id="info-panel">
+            <h3>Point Query</h3>
+            <p id="query-coords">Click on the map to query a point.</p>
+            <p id="query-value"></p>
+        </div>
+
+        <div id="downloads">
+            <h3>Downloads</h3>
+            <a id="download-tif" href="/api/download?layer=tidal_power_density&format=tif" download>
+                Download GeoTIFF
+            </a>
+        </div>
+
+        <footer>
+            <p>Powered by Thetis, Gmsh, GEBCO, GADM</p>
+            <p>MapLibre GL JS | OpenStreetMap</p>
+        </footer>
+    </div>
+
+    <div id="map"></div>
+
+    <script>
+        const map = new maplibregl.Map({
+            container: "map",
+            style: {
+                version: 8,
+                sources: {
+                    osm: {
+                        type: "raster",
+                        tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+                        tileSize: 256,
+                        attribution: "&copy; OpenStreetMap contributors",
+                        maxzoom: 19,
+                    },
+                },
+                layers: [
+                    {
+                        id: "osm-tiles",
+                        type: "raster",
+                        source: "osm",
+                        minzoom: 0,
+                        maxzoom: 19,
+                    },
+                ],
+            },
+            center: [122.5, 12.8],
+            zoom: 6,
+            minZoom: 4,
+            maxZoom: 14,
+        });
+
+        map.on("load", () => {
+            const geoserverUrl = window.location.origin + "/geoserver";
+
+            map.addSource("tidal-power", {
+                type: "raster",
+                tiles: [
+                    geoserverUrl + "/gwc/service/wmts?" +
+                    "layer=phil_tidal_energy:tidal_power_density&" +
+                    "style=&tilematrixset=EPSG:900913&" +
+                    "Service=WMTS&Request=GetTile&Version=1.0.0&" +
+                    "Format=image/png&TileMatrix=EPSG:900913:{z}&" +
+                    "TileCol={x}&TileRow={y}",
+                ],
+                tileSize: 256,
+                maxzoom: 14,
+                attribution: "Philippine Tidal Energy Assessment",
+            });
+
+            map.addLayer(
+                {
+                    id: "tidal-power-layer",
+                    type: "raster",
+                    source: "tidal-power",
+                    paint: {
+                        "raster-opacity": 0.7,
+                    },
+                },
+                "osm-tiles"
+            );
+
+            // Opacity slider
+            const opacitySlider = document.getElementById("opacity");
+            opacitySlider.addEventListener("input", () => {
+                const opacity = parseFloat(opacitySlider.value) / 100;
+                map.setPaintProperty(
+                    "tidal-power-layer",
+                    "raster-opacity",
+                    opacity
+                );
+            });
+
+            // Toggle layer visibility
+            const togglePower = document.getElementById("toggle-power");
+            togglePower.addEventListener("change", () => {
+                const visible = togglePower.checked ? "visible" : "none";
+                map.setLayoutProperty("tidal-power-layer", "visibility", visible);
+            });
+
+            // Point query on click
+            map.on("click", async (e) => {
+                const { lng, lat } = e.lngLat;
+                document.getElementById("query-coords").textContent =
+                    `${lat.toFixed(4)}°N, ${lng.toFixed(4)}°E`;
+
+                try {
+                    const resp = await fetch(
+                        `/api/query?lat=${lat}&lon=${lng}`
+                    );
+                    const data = await resp.json();
+                    if (data.value !== null && data.value !== undefined) {
+                        document.getElementById("query-value").textContent =
+                            `Power density: ${data.value.toFixed(2)} W/m²`;
+                    } else {
+                        document.getElementById("query-value").textContent =
+                            "No data at this point";
+                    }
+                } catch (err) {
+                    document.getElementById("query-value").textContent =
+                        "Query failed — API may be unavailable";
+                }
+
+                // Show marker on click
+                if (window.clickMarker) {
+                    window.clickMarker.remove();
+                }
+                window.clickMarker = new maplibregl.Marker({ color: "#ff4444" })
+                    .setLngLat([lng, lat])
+                    .addTo(map);
+            });
+
+            // Fallback WMS source if WMTS returns errors
+            map.getSource("tidal-power").tiles.push(
+                geoserverUrl + "/phil_tidal_energy/wms?" +
+                "service=WMS&version=1.3.0&request=GetMap&" +
+                "layers=phil_tidal_energy:tidal_power_density&" +
+                "format=image/png&transparent=true&" +
+                "width=256&height=256&crs=EPSG:3857&" +
+                "bbox={bbox-epsg-3857}"
+            );
+        });
+
+        // Add navigation control
+        map.addControl(new maplibregl.NavigationControl(), "top-right");
+
+        // Add scale bar
+        map.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-right");
+    </script>
+</body>
+</html>

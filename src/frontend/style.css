@@ -1,0 +1,163 @@
+/* ---- Reset & Layout ---- */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    display: flex;
+    height: 100vh;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+        Oxygen, Ubuntu, Cantarell, sans-serif;
+    color: #333;
+    overflow: hidden;
+}
+
+/* ---- Sidebar ---- */
+#sidebar {
+    width: 340px;
+    min-width: 340px;
+    background: #f8f9fa;
+    border-right: 1px solid #dee2e6;
+    display: flex;
+    flex-direction: column;
+    padding: 20px;
+    gap: 18px;
+    overflow-y: auto;
+    z-index: 10;
+}
+
+#sidebar h1 {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: #1a5276;
+    line-height: 1.3;
+}
+
+.subtitle {
+    font-size: 0.85rem;
+    color: #6c757d;
+    margin-top: -8px;
+}
+
+#sidebar h3 {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #495057;
+    margin-bottom: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+/* ---- Legend ---- */
+.legend-bar {
+    height: 14px;
+    border-radius: 3px;
+    background: linear-gradient(
+        to right,
+        #0000ff,
+        #00ffff,
+        #00ff00,
+        #ffff00,
+        #ff0000
+    );
+}
+
+.legend-labels {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.7rem;
+    color: #6c757d;
+    margin-top: 2px;
+}
+
+/* ---- Layer Controls ---- */
+#layer-controls label.toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.9rem;
+    cursor: pointer;
+}
+
+.opacity-slider {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+    font-size: 0.85rem;
+}
+
+.opacity-slider input[type="range"] {
+    flex: 1;
+    accent-color: #1a5276;
+}
+
+/* ---- Info Panel ---- */
+#info-panel p {
+    font-size: 0.85rem;
+    color: #495057;
+}
+
+#query-coords {
+    font-weight: 600;
+}
+
+#query-value {
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: #1a5276;
+    margin-top: 2px;
+}
+
+/* ---- Downloads ---- */
+#downloads a {
+    display: inline-block;
+    font-size: 0.85rem;
+    color: #fff;
+    background: #1a5276;
+    padding: 6px 14px;
+    border-radius: 4px;
+    text-decoration: none;
+    transition: background 0.2s;
+}
+
+#downloads a:hover {
+    background: #2471a3;
+}
+
+/* ---- Footer ---- */
+footer {
+    margin-top: auto;
+    font-size: 0.72rem;
+    color: #adb5bd;
+    line-height: 1.5;
+}
+
+/* ---- Map ---- */
+#map {
+    flex: 1;
+    height: 100%;
+}
+
+/* ---- Responsive ---- */
+@media (max-width: 768px) {
+    body {
+        flex-direction: column;
+    }
+
+    #sidebar {
+        width: 100%;
+        min-width: unset;
+        max-height: 40vh;
+        border-right: none;
+        border-bottom: 1px solid #dee2e6;
+        padding: 12px;
+        gap: 10px;
+    }
+
+    #map {
+        flex: 1;
+    }
+}
