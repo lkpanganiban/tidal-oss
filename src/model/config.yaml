@@ -1,0 +1,42 @@
+# Tidal hydrodynamic screening model — default configuration
+# Override via command-line or environment variables when running run.py.
+
+domain:
+  lon_min: 116.0
+  lon_max: 130.0
+  lat_min: 4.0
+  lat_max: 22.0
+  resolution_km: 2.0           # target cell size
+
+bathymetry:
+  source: gebco                 # gebco | file
+  path: data/gebco_bathymetry/gebco_2026_n19.03_s14.0_w118.0_e124.0.nc
+  min_depth: 2.0                # enforce minimum depth [m]
+  max_depth: 6000.0             # clip unrealistic depths
+  land_shapefile: data/gadm41_PHL_shp/gadm41_PHL_0.shp
+
+simulation:
+  start_time: "2024-01-01T00:00:00"
+  duration_days: 15             # one spring-neap cycle minimum
+  dt: null                      # null = auto-compute from CFL
+  cfl_safety: 0.5
+  cd: 0.0025                    # bottom drag coefficient
+  ah: 0.0                       # horizontal eddy viscosity (0 = off)
+  advection: false
+  rho: 1025.0                   # seawater density [kg/m³]
+
+tidal_forcing:
+  source: got                    # synthetic | fes2014 | tpxo9 | got
+  path: data/GOT4.10c/grids_oceantide_netcdf/
+  constituents: [M2, S2, K1, O1]
+
+output:
+  dir: output/
+  save_interval_hours: 1
+  final_geotiff: tidal_power_density.tif
+  hotspots_geojson: hotspots.geojson
+  hotspot_threshold: 200.0      # W/m² minimum for hotspot export
+
+logging:
+  level: INFO
+  progress_interval_hours: 1.0

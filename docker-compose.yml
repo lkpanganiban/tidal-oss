@@ -1,0 +1,15 @@
+services:
+  tidal-web:
+    build:
+      context: .
+      dockerfile: src/Dockerfile
+    image: tidal-model:latest
+    container_name: tidal-web
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./output:/output
+    environment:
+      - OUTPUT_DIR=/output
+      - GEOTIFF_PATH=/output/tidal_power_density.tif
+    restart: unless-stopped

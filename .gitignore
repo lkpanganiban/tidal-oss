@@ -1,0 +1,33 @@
+# --- Downloaded datasets (large, obtained externally) ---
+data/*
+!data/.gitkeep
+
+# --- Model output (generated at runtime) ---
+output/*
+!output/.gitkeep
+
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+*.egg
+dist/
+build/
+
+# --- Jupyter ---
+.ipynb_checkpoints/
+
+# --- macOS ---
+.DS_Store
+._*
+
+# --- IDE / editor ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# --- GeoTIFF aux ---
+*.tif.aux.xml

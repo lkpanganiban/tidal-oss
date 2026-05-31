@@ -1,30 +1,29 @@
 # Tidal Current Energy Assessment — Open-Source Workflow
 
-Compute and visualize tidal-current energy potential using a fully open-source geospatial and hydrodynamic modelling stack.
+Compute and visualize tidal-current energy potential for the Philippine archipelago using a fully open-source geospatial and hydrodynamic modelling stack.
 
-- **Modelling engine:** [TELEMAC-2D](https://opentelemac.org/) (finite-element hydrodynamic solver)
+- **Screening model:** 2D shallow-water finite-difference solver (Python + NumPy)
+- **Next-tier engine:** [TELEMAC-2D](https://opentelemac.org/) (finite-element, for refined site assessment)
 - **Bathymetry:** [GEBCO 2024](https://www.gebco.net/data_and_products/gridded_bathymetry_data/) (15 arc-second)
-- **Land boundary:** [GADM](https://gadm.org/) or [OSM](https://download.geofabrik.de/asia/philippines.html) shapefile
-- **Web stack:** Flask + GeoServer + MapLibre GL JS
+- **Tidal forcing:** GOT4.10c (NASA), FES2014 (AVISO), TPXO9 (OSU), or synthetic tide
+- **Land mask:** GADM Philippines shapefile (rasterised onto model grid)
+- **Web stack:** Flask + MapLibre GL JS
 
 ## Architecture
 
-Two-phase workflow:
+Two-phase workflow: a fast Python screening model identifies hotspots, then TELEMAC-2D refines them.
 
 ```
-Phase A: Hydrodynamic Modelling                 Phase B: Web Visualization
-═══════════════════════════════                 ═══════════════════════════
-                                                                         
- GEBCO  ──┐                                                              
- GADM  ──┤ ── QGIS ── BlueKenue ── TELEMAC-2D   ┌─ GeoServer (WMS/WMTS) 
- FES2014 ─┘                  (Docker container) ─┤ ├─ Flask API (REST)   
-                                      │           │ └─ MapLibre GL JS    
-                               Post-processing    └─ Nginx (frontend)     
-                                      │                                  
-                               tidal_power.tif                           
+Phase A: Screening                                Phase B: Web Visualization
+═══════════════════════                           ═══════════════════════════
+
+ GEBCO  ──┐
+ GOT4.10c ┤ ── model.run ──┬── results.nc              Flask (REST API)
+          ─┘               ├── tidal_power_density.tif  │
+                            └── hotspots.geojson    MapLibre GL JS
 ```
 
-[Full workflow diagram](docs/workflow.drawio) | [Detailed plan](docs/plan.md)
+[Full workflow diagram](docs/workflow.drawio) | [Implementation plan](docs/plan.md) | [Physics & methodology](docs/model.md) | [Step-by-step guide](src/README.md) | [Jupyter notebook](src/notebooks/01_hydrodynamic_model.ipynb)
 
 ## Quick Start
 
@@ -34,183 +33,187 @@ Phase A: Hydrodynamic Modelling                 Phase B: Web Visualization
 |------|----------------|
 | Docker | 24+ |
 | Docker Compose | v2+ |
-| Python | 3.10+ |
-| QGIS | 3.34+ LTR |
-| GDAL | 3.8+ |
+| Python (optional) | 3.10+ |
 
-### 1. Clone and prepare directories
+### 1. Download external datasets
 
 ```bash
-git clone <repo-url> && cd $(basename $_)
-mkdir -p telemac_data/{mesh,input,output,scripts} \
-         frontend \
-         api \
-         geoserver_data
+# Guided interactive mode — downloads ~44 MB GOT4.10c + ~40 MB shoreline data
+python downloader.py --all
+
+# GEBCO bathymetry requires manual download (licence):
+#   https://www.gebco.net/data_and_products/gridded_bathymetry_data/gebco_2024/
 ```
 
-### 2. Download required data
+See [src/README.md](src/README.md) for manual download URLs and extraction instructions.
 
-| Dataset | Download Link | Output |
-|---------|--------------|--------|
-| Bathymetry | [GEBCO 2024](https://www.gebco.net/data_and_products/gridded_bathymetry_data/gebco_2024/) | `GEBCO_2024.nc` |
-| Landmass | [GADM Philippines](https://gadm.org/download_country_v3.html) | `gadm41_PHL_0.shp` |
-| Tidal constituents | [FES2014](https://www.aviso.altimetry.fr/en/data/products/auxiliary-products/global-tide-fes.html) or [TPXO9](https://www.tpxo.net/) | NetCDF |
+### 2. Install Python dependencies
 
 ```bash
-# Clip GEBCO to Philippine AOI
-gdal_translate -projwin 116 22 130 4 \
-  -of NetCDF NETCDF:GEBCO_2024.nc:elevation \
-  telemac_data/gebco_philippines.nc
-
-# Convert to bathymetry GeoTIFF (land = NoData)
-gdal_calc.py -A NETCDF:telemac_data/gebco_philippines.nc:elevation \
-  --outfile=telemac_data/gebco_philippines.tif \
-  --calc="where(A > 0, -9999, -A)" --NoDataValue=-9999 --type=Float32
-
-# Alternative OSM coastline
-wget https://download.geofabrik.de/asia/philippines-latest-free.shp.zip
-unzip philippines-latest-free.shp.zip
+pip install -r src/requirements.txt
 ```
 
-### 3. Generate the mesh (QGIS + BlueKenue)
-
-1. Open the clipped bathymetry and landmass shapefile in QGIS.
-2. Define open-boundary arcs and simplify the coastline (500–1000 m tolerance).
-3. Export to [BlueKenue](https://www.nrc-cnrc.gc.ca/eng/solutions/advisory/blue_kenue_index.html) (or [Gmsh](https://gmsh.info/)) to generate an unstructured triangular mesh.
-4. Interpolate depths onto mesh nodes and assign solid/liquid boundary node strings.
-5. Save as `telemac_data/mesh/geo_philippines.slf`.
-
-### 4. Run the hydrodynamic simulation
+### 3. Generate output with the screening model
 
 ```bash
-# Build the TELEMAC-2D Docker image (15–45 min)
-docker build -t telemac2d:v8p5 -f docker/Dockerfile.telemac .
+# Run with GOT4.10c tidal forcing and GADM land mask (configured in config.yaml)
+python -m src.model.run
 
-# Prepare boundary conditions from tidal constituents
-python3 telemac_data/scripts/prepare_bc.py \
-  --fes2014 /path/to/fes2014 \
-  --mesh telemac_data/mesh/geo_philippines.slf \
-  --output telemac_data/mesh/bnd_philippines.cli
-
-# Run simulation (8-core MPI)
-docker run --rm \
-  -v "$(pwd)/telemac_data:/data" \
-  -w /data/input \
-  --shm-size=2g \
-  telemac2d:v8p5 \
-  $HOMETEL/scripts/python3/telemac2d.py cas_philippines.cas --ncsize=8
-
-# Or via Docker Compose
-TELEMAC_NPROCS=8 docker compose --profile simulation up telemac2d
+# Override duration or resolution via CLI:
+python -m src.model.run --duration-days 30 --resolution-km 1.0 --output-dir my_output
 ```
 
-### 5. Post-process to GeoTIFF
+First run will produce in `output/`:
 
-```bash
-# Convert Selafin results to NetCDF
-docker run --rm -v "$(pwd)/telemac_data:/data" telemac2d:v8p5 \
-  python3 $HOMETEL/scripts/python3/convert_telemac_file.py \
-    /data/output/r2d_philippines.slf \
-    /data/output/r2d_philippines.nc
+| File | Description |
+|------|-------------|
+| `results.nc` | Full time series (NetCDF) |
+| `tidal_power_density.tif` | Mean power density raster (Cloud-Optimised GeoTIFF) |
+| `hotspots.geojson` | Point features above hotspot threshold |
 
-# Run power-density computation and rasterization
-python3 scripts/postprocess.py \
-  --input telemac_data/output/r2d_philippines.nc \
-  --output telemac_data/output/tidal_power_density.tif \
-  --resolution 500
-```
-
-### 6. Start the web visualization stack
+### 4. Start the web service
 
 ```bash
 docker compose up -d
 ```
 
-| Service | URL | Purpose |
-|---------|-----|---------|
-| GeoServer | http://localhost:8080/geoserver | WMS/WMTS tile serving |
-| Flask API | http://localhost:5000/api | REST metadata & queries |
-| Frontend | http://localhost | MapLibre GL JS map |
+Open **http://localhost:5000** — the map displays a tidal power density overlay with click-to-query values.
+
+### 5. Verify
+
+```bash
+curl http://localhost:5000/api/metadata | jq
+curl "http://localhost:5000/api/query?lat=12.5&lon=122.5"
+```
 
 ## Project Structure
 
 ```
 .
-├── docker/
-│   └── Dockerfile.telemac          # TELEMAC-2D build container
-├── telemac_data/
-│   ├── mesh/
-│   │   ├── geo_philippines.slf     # Mesh geometry
-│   │   ├── bnd_philippines.cli     # Boundary conditions
-│   │   └── fonsim_philippines.slf  # Friction field (optional)
-│   ├── input/
-│   │   └── cas_philippines.cas     # TELEMAC steering file
-│   ├── output/
-│   │   └── tidal_power_density.tif # Final GeoTIFF output
-│   └── scripts/
-│       ├── prepare_bc.py           # Generate .cli from FES2014/TPXO9
-│       └── postprocess.py          # SLF → NetCDF → COG
-├── api/
-│   ├── app.py                      # Flask REST API
-│   ├── requirements.txt
-│   └── Dockerfile
-├── frontend/
-│   ├── index.html                  # MapLibre GL JS map
-│   └── style.css
-├── geoserver_data/                 # GeoServer data directory
-│   └── data/phil_tidal_energy/     # Symlink or copy of output GeoTIFFs
-├── nginx.conf                      # Nginx reverse proxy config
-├── docker-compose.yml              # Full stack orchestration
+├── src/
+│   ├── model/                         # Screening model (Python)
+│   │   ├── run.py                     # CLI entry point
+│   │   ├── config.yaml                # Default simulation parameters
+│   │   ├── solver.py                  # Forward-backward Arakawa C-grid solver
+│   │   ├── grid.py                    # Structured grid definition
+│   │   ├── forcing.py                 # Tidal BC (synthetic | FES2014 | TPXO9 | GOT4.10c)
+│   │   ├── bathymetry.py              # GEBCO loading, regridding, shapefile land mask
+│   │   ├── output.py                  # NetCDF, COG GeoTIFF, GeoJSON writer
+│   │   ├── utils.py                   # Coriolis, CFL, interpolation
+│   │   └── tests/
+│   │       ├── test_conservation.py
+│   │       ├── test_tidal_channel.py
+│   │       └── test_standing_wave.py
+│   ├── web/                           # Web visualisation
+│   │   ├── app.py                     # Flask API (tiles, queries, downloads)
+│   │   ├── requirements.txt
+│   │   └── static/
+│   │       └── index.html             # MapLibre GL JS interactive map
+│   ├── notebooks/
+│   │   └── 01_hydrodynamic_model.ipynb  # Educational walkthrough
+│   ├── requirements.txt               # Consolidated Python dependencies
+│   ├── Dockerfile                     # All-in-one image
+│   └── README.md                      # Step-by-step guide
+├── data/
+│   ├── .gitkeep                       # Directory tracked; contents ignored
+│   ├── GOT4.10c/                      # Extracted tidal harmonics (auto-downloaded)
+│   ├── gadm41_PHL_shp/                # Extracted land boundary (auto-downloaded)
+│   └── gebco_bathymetry/              # GEBCO NetCDF (manual download)
+├── output/
+│   └── .gitkeep                       # Directory tracked; contents ignored
+├── downloader.py                      # Dataset download helper
+├── docker-compose.yml                 # Service orchestration
+├── .gitignore                         # Excludes data/, output/, __pycache__, etc.
 ├── docs/
-│   ├── plan.md                     # Detailed implementation plan
-│   └── workflow.drawio             # Visual workflow diagram
-├── README.md
-└── Makefile
+│   ├── plan.md                        # Detailed implementation plan
+│   ├── model.md                       # Physics & methodology reference
+│   └── workflow.drawio                # Visual workflow diagram
+└── README.md
+```
+
+## Jupyter Notebook
+
+`src/notebooks/01_hydrodynamic_model.ipynb` walks through the model from first principles — no physics background required. Covers:
+
+- What tides are and why they matter
+- How a computer represents the ocean (the Arakawa C-grid)
+- The governing equations explained with analogies
+- Bathymetry, land masking, and tidal boundary conditions
+- Time-stepping, stability, and the CFL condition
+- Running the model and visualising results
+
+```bash
+jupyter notebook src/notebooks/
 ```
 
 ## API Endpoints
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/layers` | GET | List available tidal-energy layers |
-| `/api/layers/<id>` | GET | Layer metadata (bbox, units, statistics) |
-| `/api/query?lat=&lon=` | GET | Power-density value at a point |
-| `/api/download` | GET | Download GeoTIFF or CSV |
+| `/` | GET | MapLibre GL JS interactive map |
+| `/api/metadata` | GET | GeoTIFF bounds, CRS, stats, max zoom |
+| `/api/query?lat=&lon=` | GET | Power-density value at a point (W/m²) |
+| `/api/tiles/{z}/{x}/{y}.png` | GET | Colormapped 256×256 PNG tiles |
+| `/api/download/tidal_power_density.tif` | GET | Download the full GeoTIFF |
 
-## Steering File Reference
+## Model Configuration
 
-Key parameters in `cas_philippines.cas`:
+Key parameters in `src/model/config.yaml`:
 
-```
-DURATION                             = 2592000
-TIME STEP                            = 150
-HYDRODYNAMIC LAW                     = 3
-TIDAL FLATS                          = YES
-OPTION FOR LIQUID BOUNDARIES         = 1
-GEOMETRY FILE                        = /data/mesh/geo_philippines.slf
-BOUNDARY CONDITIONS FILE             = /data/mesh/bnd_philippines.cli
-RESULTS FILE                         = /data/output/r2d_philippines.slf
-RESULTS FILE FORMAT                  = SELAFIN
-```
+| Section | Parameter | Default | Description |
+|---------|-----------|---------|-------------|
+| `domain` | `lon_min`, `lon_max`, `lat_min`, `lat_max` | 116–130°E, 4–22°N | Philippine bounding box |
+| `domain` | `resolution_km` | 2.0 | Grid cell size |
+| `bathymetry` | `path` | GEBCO NetCDF | Path to bathymetry file |
+| `bathymetry` | `min_depth` / `max_depth` | 2.0 / 6000.0 m | Depth clipping |
+| `bathymetry` | `land_shapefile` | GADM .shp | Coastline polygon (`null` for elev > 0 fallback) |
+| `simulation` | `duration_days` | 15 | One spring-neap cycle |
+| `simulation` | `dt` | `null` | Time step (`null` = auto CFL) |
+| `simulation` | `cfl_safety` | 0.5 | CFL safety factor (lower = more stable) |
+| `simulation` | `cd` | 0.0025 | Bottom drag coefficient |
+| `simulation` | `advection` | `false` | Non-linear advection terms |
+| `simulation` | `rho` | 1025.0 | Seawater density (kg/m³) |
+| `tidal_forcing` | `source` | `got` | `synthetic`, `got`, `fes2014`, or `tpxo9` |
+| `tidal_forcing` | `path` | GOT netCDF dir | Path to constituent files |
+| `tidal_forcing` | `constituents` | [M2, S2, K1, O1] | Which harmonics to include |
+| `output` | `dir` | `output/` | Output directory |
+| `output` | `hotspot_threshold` | 200.0 | Hotspot minimum (W/m²) |
+
+Override via CLI: `python -m src.model.run --duration-days 30 --resolution-km 1.0 --output-dir my_output`
 
 ## Validation
 
-- Compare water levels against [NAMRIA](https://www.namria.gov.ph/) tide gauges or [IOC sea-level stations](https://www.ioc-sealevelmonitoring.org/).
-- Validate currents against published ADCP campaigns or [TPXO predictions](https://www.tpxo.net/).
-- Cross-check hotspots against known tidal-energy sites (San Bernardino Strait, Surigao Strait).
+- [Seiche period](src/model/tests/test_standing_wave.py) — validated against Merian's formula for closed basins
+- [Tidal channel](src/model/tests/test_tidal_channel.py) — validated against analytic M2-forced channel solution
+- [Mass conservation](src/model/tests/test_conservation.py) — drift remains below 0.01% in production runs
+- Compare water levels against [NAMRIA](https://www.namria.gov.ph/) tide gauges or [IOC sea-level stations](https://www.ioc-sealevelmonitoring.org/)
+- Cross-check hotspots against known tidal-energy sites (San Bernardino Strait, Surigao Strait)
+
+## Test Suite
+
+```bash
+docker run --rm --entrypoint python tidal-model -m pytest /app/src/model/tests/
+
+# Or locally:
+python -m pytest src/model/tests/
+```
 
 ## Troubleshooting
 
 | Symptom | Fix |
 |---------|-----|
-| TELEMAC `Segmentation fault` on start | Add `--shm-size=2g` to `docker run` |
-| `BUILD FAILED` in Docker | Run `find /usr -name "hdf5.mod"` inside builder and update `incs_all` in `systel_ubuntu.cfg` |
-| GeoServer won't read GeoTIFF | Ensure the file is a [Cloud-Optimized GeoTIFF](https://www.cogeo.org/) with inner overviews |
-| CORS errors from MapLibre | Set `CORS_ENABLED=true` in GeoServer container env |
-| Flask cannot find results | Verify `telemac_data/output` is mounted at `/data` in the flask-api container |
+| Docker build fails at `pip install rasterio` | The image needs `libgdal-dev`; ensure it installs before pip |
+| `max\|η\|=0.00 m \| max\|U\|=0.00 m/s` in logs | Config points to a bathymetry file but no open-boundary cells exist — ensure `land_shapefile` is set or use `null` for the elevation-based fallback |
+| Model produces NaN | CFL safety factor too high — lower `cfl_safety` to 0.25 or explicitly set `dt` in config |
+| GeoTIFF not found (404 on tiles) | Run the model first to generate `output/tidal_power_density.tif` |
+| Flask cannot find results | Verify `./output` is volume-mounted at `/output` in the container |
+| Model runs slowly | Reduce `duration_days` or increase `resolution_km` for testing |
+| `netCDF4` / `fiona` import error | Run `pip install -r src/requirements.txt` |
+| Tidal boundary all NaN | GOT source data has NaN over land — update to latest `forcing.py` which fills NaN before interpolation |
 
 ## Future Extensions
 
+- TELEMAC-2D refinement of screening hotspots (unstructured mesh, higher resolution)
 - TELEMAC-3D for vertical velocity profiling
 - Wave-current coupling with TOMAWAC
 - Real-time tidal forecasting via live boundary-condition feeds

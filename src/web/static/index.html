@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tidal Current Energy — Philippines</title>
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+  #map { position: absolute; top: 0; bottom: 0; width: 100%; }
+
+  #panel {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    background: rgba(30, 30, 40, 0.92);
+    color: #eee;
+    padding: 14px 18px;
+    border-radius: 8px;
+    max-width: 300px;
+    font-size: 13px;
+    z-index: 10;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.4);
+    backdrop-filter: blur(8px);
+  }
+  #panel h3 { font-size: 15px; margin-bottom: 8px; color: #4fc3f7; }
+  #panel table { width: 100%; border-collapse: collapse; }
+  #panel td { padding: 3px 6px; }
+  #panel td:last-child { text-align: right; font-weight: 600; }
+  #coords { color: #aaa; font-size: 11px; margin-top: 6px; }
+  #loading { color: #ffa726; font-size: 12px; }
+
+  #legend {
+    position: absolute;
+    bottom: 30px;
+    left: 10px;
+    background: rgba(30, 30, 40, 0.90);
+    color: #ccc;
+    padding: 10px 14px;
+    border-radius: 6px;
+    font-size: 11px;
+    z-index: 10;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  }
+  #legend .bar {
+    width: 200px;
+    height: 12px;
+    border-radius: 6px;
+    margin: 4px 0;
+    background: linear-gradient(to right,
+      rgba(0,3,80,0.6) 0%, rgba(0,50,200,0.8) 10%,
+      rgba(0,180,200,0.8) 30%, rgba(0,230,130,0.8) 50%,
+      rgba(230,200,0,0.8) 70%, rgba(255,100,0,0.8) 90%,
+      rgba(255,0,0,0.8) 100%);
+  }
+  #legend .labels {
+    display: flex;
+    justify-content: space-between;
+    width: 200px;
+  }
+  #legend h4 { margin-bottom: 2px; color: #4fc3f7; }
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<div id="panel">
+  <h3>Tidal Power Density</h3>
+  <div id="loading" style="display:none">Querying&hellip;</div>
+  <table>
+    <tr><td>Power density</td><td id="val-power">&mdash;</td></tr>
+    <tr><td>Depth</td><td id="val-depth">&mdash;</td></tr>
+  </table>
+  <div id="coords"></div>
+</div>
+
+<div id="legend">
+  <h4>Mean Power Density (W/m&sup2;)</h4>
+  <div class="bar"></div>
+  <div class="labels">
+    <span>0</span><span>400</span><span>800</span><span>1200</span><span>1600+</span>
+  </div>
+</div>
+
+<script>
+(async function () {
+  const apiBase = window.location.origin + '/api';
+
+  const map = new maplibregl.Map({
+    container: 'map',
+    center: [122.5, 12.5],
+    zoom: 6,
+    style: {
+      version: 8,
+      sources: {
+        osm: {
+          type: 'raster',
+          tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+          tileSize: 256,
+          attribution: '&copy; OpenStreetMap contributors',
+          maxzoom: 19,
+        },
+      },
+      layers: [
+        { id: 'osm-layer', type: 'raster', source: 'osm' },
+      ],
+    },
+  });
+
+  map.addControl(new maplibregl.NavigationControl(), 'top-left');
+
+  // ---- Load metadata and add tidal layer ----
+  let meta = null;
+  try {
+    const resp = await fetch(apiBase + '/metadata');
+    meta = await resp.json();
+  } catch (e) {
+    console.warn('Metadata fetch failed', e);
+  }
+
+  if (meta && meta.available) {
+    map.addSource('tidal-power', {
+      type: 'raster',
+      tiles: [apiBase + '/tiles/{z}/{x}/{y}.png'],
+      tileSize: 256,
+      bounds: [meta.bounds.west, meta.bounds.south, meta.bounds.east, meta.bounds.north],
+      maxzoom: meta.max_zoom || 10,
+    });
+
+    map.addLayer({
+      id: 'tidal-layer',
+      type: 'raster',
+      source: 'tidal-power',
+      paint: { 'raster-opacity': 0.75 },
+    }, 'osm-layer');
+
+    document.getElementById('legend').style.display = 'block';
+  } else {
+    document.getElementById('legend').style.display = 'none';
+    document.getElementById('val-power').textContent = '(no data)';
+  }
+
+  // ---- Click handler ----
+  map.on('click', async (e) => {
+    const { lat, lng } = e.lngLat;
+    document.getElementById('coords').textContent =
+      `${lat.toFixed(4)}&deg;N, ${lng.toFixed(4)}&deg;E`;
+
+    const loading = document.getElementById('loading');
+    loading.style.display = 'block';
+
+    try {
+      const r = await fetch(`${apiBase}/query?lat=${lat.toFixed(6)}&lon=${lng.toFixed(6)}`);
+      if (r.ok) {
+        const d = await r.json();
+        document.getElementById('val-power').textContent =
+          d.power_density_Wm2.toFixed(1) + ' W/m²';
+        document.getElementById('val-depth').textContent =
+          d.depth_m !== undefined ? d.depth_m.toFixed(0) + ' m' : '—';
+      } else {
+        document.getElementById('val-power').textContent = '(land / no data)';
+        document.getElementById('val-depth').textContent = '—';
+      }
+    } catch (err) {
+      document.getElementById('val-power').textContent = '(error)';
+    }
+    loading.style.display = 'none';
+  });
+
+  map.on('mousemove', (e) => {
+    map.getCanvas().style.cursor = meta && meta.available ? 'crosshair' : '';
+  });
+})();
+</script>
+
+</body>
+</html>
