@@ -21,12 +21,12 @@ from flask import Flask, jsonify, request, send_file, send_from_directory
 
 logger = logging.getLogger(__name__)
 
-app = Flask(__name__, static_folder=STATIC_DIR, static_url_path="")
-
 _WEB_DIR = os.path.dirname(os.path.abspath(__file__))
+STATIC_DIR = os.path.join(_WEB_DIR, "static")
 OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "/output")
 GEOTIFF_PATH = os.environ.get("GEOTIFF_PATH", os.path.join(OUTPUT_DIR, "tidal_power_density.tif"))
-STATIC_DIR = os.path.join(_WEB_DIR, "static")
+
+app = Flask(__name__, static_folder=STATIC_DIR, static_url_path="")
 
 MAX_TILE_ZOOM = 10
 TILE_SIZE = 256
@@ -139,17 +139,25 @@ def _parse_path_geotiff() -> dict:
     src = _open_raster()
     if src is None:
         return {"available": False, "geotiff_path": GEOTIFF_PATH}
+    from rasterio.warp import transform_bounds
+
     bounds = src.bounds
+    # Transform bounds to EPSG:4326 for the frontend
+    if src.crs is not None and src.crs.to_epsg() != 4326:
+        bbox_4326 = transform_bounds(src.crs, "EPSG:4326", bounds.left, bounds.bottom, bounds.right, bounds.top)
+    else:
+        bbox_4326 = (bounds.left, bounds.bottom, bounds.right, bounds.top)
+
     stats = _raster_stats(src)
     src.close()
     return {
         "available": True,
         "path": GEOTIFF_PATH,
         "bounds": {
-            "west": bounds.left,
-            "south": bounds.bottom,
-            "east": bounds.right,
-            "north": bounds.top,
+            "west": bbox_4326[0],
+            "south": bbox_4326[1],
+            "east": bbox_4326[2],
+            "north": bbox_4326[3],
         },
         "crs": "EPSG:4326",
         "units": "W/m2",
@@ -179,9 +187,14 @@ def _point_query(lat: float, lon: float) -> dict | None:
         return None
 
     from rasterio.transform import rowcol
+    from rasterio.warp import transform
 
     try:
-        row, col = rowcol(src.transform, lon, lat)
+        if src.crs is not None and src.crs.to_epsg() != 4326:
+            x, y = transform("EPSG:4326", src.crs, [lon], [lat])
+            row, col = rowcol(src.transform, x[0], y[0])
+        else:
+            row, col = rowcol(src.transform, lon, lat)
     except Exception:
         return None
 
