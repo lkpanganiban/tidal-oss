@@ -20,7 +20,7 @@ Phase A: Screening                                Phase B: Web Visualization
  GEBCO  ──┐
  GOT4.10c ┤ ── model.run ──┬── results.nc              Flask (REST API)
           ─┘               ├── tidal_power_density.tif  │
-                            └── hotspots.geojson    MapLibre GL JS
+                           └── hotspots.geojson    MapLibre GL JS
 ```
 
 [Full workflow diagram](docs/workflow.drawio) | [Implementation plan](docs/plan.md) | [Physics & methodology](docs/model.md) | [Step-by-step guide](src/README.md) | [Jupyter notebook](src/notebooks/01_hydrodynamic_model.ipynb)
@@ -31,21 +31,24 @@ Phase A: Screening                                Phase B: Web Visualization
 
 | Tool | Minimum Version |
 |------|----------------|
+| Python | 3.10+ |
 | Docker | 24+ |
 | Docker Compose | v2+ |
-| Python (optional) | 3.10+ |
 
 ### 1. Download external datasets
 
 ```bash
-# Guided interactive mode — downloads ~44 MB GOT4.10c + ~40 MB shoreline data
+# Auto-download OSM shoreline, GADM boundary, and GOT4.10c tidal harmonics (~100 MB total)
 python downloader.py --all
+
+# Extract GOT4.10c after download:
+tar xzf data/got4.10c.tar.gz -C data/
 
 # GEBCO bathymetry requires manual download (licence):
 #   https://www.gebco.net/data_and_products/gridded_bathymetry_data/gebco_2024/
 ```
 
-See [src/README.md](src/README.md) for manual download URLs and extraction instructions.
+See [src/README.md](src/README.md) for manual download URLs, extraction instructions, and full dataset details.
 
 ### 2. Install Python dependencies
 
@@ -63,7 +66,7 @@ python -m src.model.run
 python -m src.model.run --duration-days 30 --resolution-km 1.0 --output-dir my_output
 ```
 
-First run will produce in `output/`:
+The run produces in `output/`:
 
 | File | Description |
 |------|-------------|
@@ -91,43 +94,48 @@ curl "http://localhost:5000/api/query?lat=12.5&lon=122.5"
 ```
 .
 ├── src/
-│   ├── model/                         # Screening model (Python)
-│   │   ├── run.py                     # CLI entry point
-│   │   ├── config.yaml                # Default simulation parameters
-│   │   ├── solver.py                  # Forward-backward Arakawa C-grid solver
-│   │   ├── grid.py                    # Structured grid definition
-│   │   ├── forcing.py                 # Tidal BC (synthetic | FES2014 | TPXO9 | GOT4.10c)
-│   │   ├── bathymetry.py              # GEBCO loading, regridding, shapefile land mask
-│   │   ├── output.py                  # NetCDF, COG GeoTIFF, GeoJSON writer
-│   │   ├── utils.py                   # Coriolis, CFL, interpolation
+│   ├── model/                             # Screening model (Python)
+│   │   ├── __init__.py                    # Package init
+│   │   ├── run.py                         # CLI entry point
+│   │   ├── config.yaml                    # Default simulation parameters
+│   │   ├── solver.py                      # Forward-backward Arakawa C-grid solver
+│   │   ├── grid.py                        # StructuredGrid dataclass + builders
+│   │   ├── forcing.py                     # Tidal BC (synthetic | FES2014 | TPXO9 | GOT4.10c)
+│   │   ├── bathymetry.py                  # GEBCO loading, regridding, shapefile land mask
+│   │   ├── output.py                      # NetCDF, COG GeoTIFF, GeoJSON writer
+│   │   ├── utils.py                       # Coriolis, CFL, interpolation helpers
 │   │   └── tests/
-│   │       ├── test_conservation.py
-│   │       ├── test_tidal_channel.py
-│   │       └── test_standing_wave.py
-│   ├── web/                           # Web visualisation
-│   │   ├── app.py                     # Flask API (tiles, queries, downloads)
-│   │   ├── requirements.txt
+│   │       ├── __init__.py
+│   │       ├── test_conservation.py        # Mass conservation & power-density tests
+│   │       ├── test_tidal_channel.py       # M2-forced channel validation
+│   │       └── test_standing_wave.py       # Seiche period validation
+│   ├── web/                               # Web visualisation
+│   │   ├── __init__.py
+│   │   ├── app.py                         # Flask API (tiles, queries, downloads)
+│   │   ├── requirements.txt               # Web-only dependencies
 │   │   └── static/
-│   │       └── index.html             # MapLibre GL JS interactive map
+│   │       └── index.html                 # MapLibre GL JS interactive map
 │   ├── notebooks/
-│   │   └── 01_hydrodynamic_model.ipynb  # Educational walkthrough
-│   ├── requirements.txt               # Consolidated Python dependencies
-│   ├── Dockerfile                     # All-in-one image
-│   └── README.md                      # Step-by-step guide
+│   │   └── 01_hydrodynamic_model.ipynb    # Educational walkthrough
+│   ├── requirements.txt                   # Consolidated Python dependencies
+│   ├── Dockerfile                         # All-in-one image
+│   └── README.md                          # Step-by-step guide
 ├── data/
-│   ├── .gitkeep                       # Directory tracked; contents ignored
-│   ├── GOT4.10c/                      # Extracted tidal harmonics (auto-downloaded)
-│   ├── gadm41_PHL_shp/                # Extracted land boundary (auto-downloaded)
-│   └── gebco_bathymetry/              # GEBCO NetCDF (manual download)
+│   ├── .gitkeep                           # Directory tracked; contents ignored
+│   ├── got4.10c.tar.gz                    # GOT4.10c archive (auto-downloaded)
+│   ├── GOT4.10c/                          # Extracted tidal harmonics
+│   ├── philippines-latest-free.shp/       # OSM shoreline shapefiles (auto-downloaded)
+│   ├── gadm41_PHL_shp/                    # Land boundary shapefile (auto-downloaded)
+│   └── gebco_bathymetry/                  # GEBCO NetCDF (manual download)
 ├── output/
-│   └── .gitkeep                       # Directory tracked; contents ignored
-├── downloader.py                      # Dataset download helper
-├── docker-compose.yml                 # Service orchestration
-├── .gitignore                         # Excludes data/, output/, __pycache__, etc.
+│   └── .gitkeep                           # Directory tracked; contents ignored
+├── downloader.py                          # Dataset download helper
+├── docker-compose.yml                     # Service orchestration
+├── .gitignore
 ├── docs/
-│   ├── plan.md                        # Detailed implementation plan
-│   ├── model.md                       # Physics & methodology reference
-│   └── workflow.drawio                # Visual workflow diagram
+│   ├── plan.md                            # Detailed implementation plan
+│   ├── model.md                           # Physics & methodology reference
+│   └── workflow.drawio                    # Visual workflow diagram
 └── README.md
 ```
 
@@ -164,20 +172,26 @@ Key parameters in `src/model/config.yaml`:
 |---------|-----------|---------|-------------|
 | `domain` | `lon_min`, `lon_max`, `lat_min`, `lat_max` | 116–130°E, 4–22°N | Philippine bounding box |
 | `domain` | `resolution_km` | 2.0 | Grid cell size |
+| `bathymetry` | `source` | `gebco` | Data source |
 | `bathymetry` | `path` | GEBCO NetCDF | Path to bathymetry file |
 | `bathymetry` | `min_depth` / `max_depth` | 2.0 / 6000.0 m | Depth clipping |
 | `bathymetry` | `land_shapefile` | GADM .shp | Coastline polygon (`null` for elev > 0 fallback) |
+| `simulation` | `start_time` | `2024-01-01T00:00:00` | Simulation start |
 | `simulation` | `duration_days` | 15 | One spring-neap cycle |
 | `simulation` | `dt` | `null` | Time step (`null` = auto CFL) |
 | `simulation` | `cfl_safety` | 0.5 | CFL safety factor (lower = more stable) |
 | `simulation` | `cd` | 0.0025 | Bottom drag coefficient |
+| `simulation` | `ah` | 0.0 | Horizontal eddy viscosity (0 = off) |
 | `simulation` | `advection` | `false` | Non-linear advection terms |
 | `simulation` | `rho` | 1025.0 | Seawater density (kg/m³) |
 | `tidal_forcing` | `source` | `got` | `synthetic`, `got`, `fes2014`, or `tpxo9` |
 | `tidal_forcing` | `path` | GOT netCDF dir | Path to constituent files |
 | `tidal_forcing` | `constituents` | [M2, S2, K1, O1] | Which harmonics to include |
 | `output` | `dir` | `output/` | Output directory |
+| `output` | `save_interval_hours` | 1 | Snapshot save interval |
 | `output` | `hotspot_threshold` | 200.0 | Hotspot minimum (W/m²) |
+| `logging` | `level` | `INFO` | Log level |
+| `logging` | `progress_interval_hours` | 1.0 | Progress log frequency |
 
 Override via CLI: `python -m src.model.run --duration-days 30 --resolution-km 1.0 --output-dir my_output`
 
@@ -192,9 +206,10 @@ Override via CLI: `python -m src.model.run --duration-days 30 --resolution-km 1.
 ## Test Suite
 
 ```bash
+# Docker
 docker run --rm --entrypoint python tidal-model -m pytest /app/src/model/tests/
 
-# Or locally:
+# Local
 python -m pytest src/model/tests/
 ```
 
@@ -203,7 +218,7 @@ python -m pytest src/model/tests/
 | Symptom | Fix |
 |---------|-----|
 | Docker build fails at `pip install rasterio` | The image needs `libgdal-dev`; ensure it installs before pip |
-| `max\|η\|=0.00 m \| max\|U\|=0.00 m/s` in logs | Config points to a bathymetry file but no open-boundary cells exist — ensure `land_shapefile` is set or use `null` for the elevation-based fallback |
+| `max|η|=0.00 m \| max|U|=0.00 m/s` in logs | Config points to a bathymetry file but no open-boundary cells exist — ensure `land_shapefile` is set or use `null` for the elevation-based fallback |
 | Model produces NaN | CFL safety factor too high — lower `cfl_safety` to 0.25 or explicitly set `dt` in config |
 | GeoTIFF not found (404 on tiles) | Run the model first to generate `output/tidal_power_density.tif` |
 | Flask cannot find results | Verify `./output` is volume-mounted at `/output` in the container |

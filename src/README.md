@@ -2,21 +2,31 @@
 
 ```
 src/
-├── model/                 # 2D shallow-water screening model
-│   ├── run.py             # CLI entry point
-│   ├── config.yaml        # Default simulation parameters
-│   ├── solver.py          # Forward-backward Arakawa C-grid solver
-│   ├── grid.py            # Structured grid definition
-│   ├── forcing.py         # Tidal BC (synthetic | FES2014 | TPXO9 | GOT4.10c)
-│   ├── bathymetry.py      # GEBCO loading, clipping, regridding, shapefile land mask
-│   ├── output.py          # NetCDF, Cloud-Optimised GeoTIFF, GeoJSON writer
-│   └── tests/             # Conservation, channel, and seiche tests
-├── web/                   # Flask API + MapLibre GL JS frontend
-│   ├── app.py             # Flask application (tiles, queries, downloads)
-│   ├── requirements.txt   # Python dependencies
+├── model/                     # 2D shallow-water screening model
+│   ├── __init__.py            # Package init
+│   ├── run.py                 # CLI entry point
+│   ├── config.yaml            # Default simulation parameters
+│   ├── solver.py              # Forward-backward Arakawa C-grid solver
+│   ├── grid.py                # StructuredGrid dataclass + builders
+│   ├── forcing.py             # Tidal BC (synthetic | FES2014 | TPXO9 | GOT4.10c)
+│   ├── bathymetry.py          # GEBCO loading, clamping, regridding, shapefile land mask
+│   ├── output.py              # NetCDF, Cloud-Optimised GeoTIFF, GeoJSON writer
+│   ├── utils.py               # Coriolis, CFL, interpolation helpers
+│   └── tests/                 # Conservation, channel, and seiche tests
+│       ├── __init__.py
+│       ├── test_conservation.py
+│       ├── test_tidal_channel.py
+│       └── test_standing_wave.py
+├── web/                       # Flask API + MapLibre GL JS frontend
+│   ├── __init__.py
+│   ├── app.py                 # Flask application (tiles, queries, downloads)
+│   ├── requirements.txt       # Web-only Python dependencies
 │   └── static/
-│       └── index.html     # Interactive map
-└── Dockerfile             # All-in-one Docker image
+│       └── index.html         # Interactive map
+├── notebooks/
+│   └── 01_hydrodynamic_model.ipynb  # Educational walkthrough
+├── requirements.txt           # Consolidated Python dependencies
+└── Dockerfile                 # All-in-one Docker image
 ```
 
 ---
@@ -37,26 +47,32 @@ The model can run on synthetic data, but for realistic simulations you need:
 ### Using the downloader
 
 ```bash
-python downloader.py                # guided interactive mode (y/N prompts)
-python downloader.py --all          # auto-download OSM + GADM; show manual steps for the rest
-python downloader.py --shoreline    # OSM + GADM only
-python downloader.py --tidal        # show FES2014 + TPXO9 manual download instructions
-python downloader.py --gebco        # show GEBCO manual instructions
-python downloader.py --data-dir ./downloaded_data   # custom output directory
+python downloader.py                  # guided interactive mode (y/N prompts)
+python downloader.py --all            # auto-download OSM + GADM + GOT4.10c; show manual steps for the rest
+python downloader.py --shoreline      # OSM + GADM only
+python downloader.py --tidal          # show manual download instructions for FES2014, TPXO9, and GOT4.10c
+python downloader.py --gebco          # show GEBCO manual instructions
+python downloader.py --data-dir ./downloaded_data     # custom output directory
 ```
 
-Automatically downloaded zips are extracted in-place. Already-present files are skipped unless `--force` is passed.
+Automatically downloaded zips (OSM, GADM) are extracted in-place. The GOT4.10c archive (`got4.10c.tar.gz`) is downloaded but **not** auto-extracted — you must extract it manually:
+
+```bash
+tar xzf data/got4.10c.tar.gz -C data/
+```
+
+Already-present files are skipped unless `--force` is passed.
 
 After downloading, update `src/model/config.yaml` to point at your data:
 
 ```yaml
 bathymetry:
-  path: data/GEBCO_2024.nc             # ← set this
+  path: data/gebco_bathymetry/GEBCO_2024.nc      # ← set this
   land_shapefile: data/gadm41_PHL_shp/gadm41_PHL_0.shp  # or null
 
 tidal_forcing:
-  source: got                           # synthetic | fes2014 | tpxo9 | got
-  path: data/GOT4.10c/grids_oceantide_netcdf/  # dir for GOT/FES, file for TPXO
+  source: got                                      # synthetic | got | fes2014 | tpxo9
+  path: data/GOT4.10c/grids_oceantide_netcdf/     # dir for GOT/FES, file for TPXO
 
 output:
   dir: output/
@@ -71,16 +87,16 @@ output:
 
 ### Extraction
 
-Automatically downloaded zips (OSM, GADM) are extracted in-place by the downloader. For manually downloaded archives, extract them with:
+For manually downloaded archives, extract them with:
 
 ```bash
 # GOT4.10c tar.gz
 tar xzf data/got4.10c.tar.gz -C data/
 
-# OSM shapefile zip (if downloaded manually)
+# OSM shapefile zip
 unzip data/philippines-latest-free.shp.zip -d data/philippines-latest-free.shp/
 
-# GADM boundary zip (if downloaded manually)
+# GADM boundary zip
 unzip data/gadm41_PHL_shp.zip -d data/gadm41_PHL_shp/
 ```
 
@@ -88,7 +104,8 @@ Expected directory layout:
 
 ```
 data/
-├── GEBCO_2024.nc
+├── gebco_bathymetry/
+│   └── GEBCO_2024.nc
 ├── fes2014/
 │   ├── M2_ocean.nc
 │   ├── M2_load.nc
@@ -127,7 +144,7 @@ The model produces three files from a tidal simulation:
 ```bash
 cd /path/to/tidal-oss
 
-pip install numpy scipy xarray pyyaml rasterio fiona affine netCDF4
+pip install -r src/requirements.txt
 
 python -m src.model.run
 ```
@@ -153,6 +170,7 @@ docker build -t tidal-model -f src/Dockerfile .
 
 docker run --rm \
   -v "$(pwd)/output:/output" \
+  -v "$(pwd)/data:/app/data" \
   --entrypoint python \
   tidal-model \
   -m model.run --output-dir /output
@@ -163,9 +181,10 @@ The model logs progress every hour; duration and resolution are read from `src/m
 ### Run the test suite
 
 ```bash
+# Docker
 docker run --rm --entrypoint python tidal-model -m pytest /app/src/model/tests/
 
-# Or locally:
+# Local
 python -m pytest src/model/tests/
 ```
 
@@ -190,7 +209,7 @@ docker run -p 5000:5000 -v "$(pwd)/output:/output" tidal-model
 ### Option C: Local Python
 
 ```bash
-pip install flask numpy rasterio pillow
+pip install -r src/requirements.txt
 
 GEOTIFF_PATH=output/tidal_power_density.tif \
   python -m src.web.app --host 0.0.0.0 --port 5000
@@ -224,6 +243,11 @@ For a single command that builds the image, runs the model, and starts the web s
 ```bash
 docker build -t tidal-model -f src/Dockerfile . && \
   mkdir -p output && \
-  docker run --rm -v "$(pwd)/output:/output" --entrypoint python tidal-model -m model.run --output-dir /output && \
+  docker run --rm \
+    -v "$(pwd)/output:/output" \
+    -v "$(pwd)/data:/app/data" \
+    --entrypoint python \
+    tidal-model \
+    -m model.run --output-dir /output && \
   docker compose up -d
 ```
