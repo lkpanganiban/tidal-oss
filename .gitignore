@@ -31,3 +31,4 @@ build/
 
 # --- GeoTIFF aux ---
 *.tif.aux.xml
+test_output/

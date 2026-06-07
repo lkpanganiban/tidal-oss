@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 _WEB_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(_WEB_DIR, "static")
 OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "/output")
-GEOTIFF_PATH = os.environ.get("GEOTIFF_PATH", os.path.join(OUTPUT_DIR, "tidal_power_density.tif"))
+GEOTIFF_PATH = os.path.abspath(os.environ.get("GEOTIFF_PATH", os.path.join(OUTPUT_DIR, "tidal_power_density.tif")))
 
 app = Flask(__name__, static_folder=STATIC_DIR, static_url_path="")
 
@@ -289,8 +289,8 @@ def main():
     parser.add_argument("--geotiff", default=GEOTIFF_PATH, help="Path to GeoTIFF")
     args = parser.parse_args()
 
-    GEOTIFF_PATH = args.geotiff
-    os.environ["GEOTIFF_PATH"] = args.geotiff
+    GEOTIFF_PATH = os.path.abspath(args.geotiff)
+    os.environ["GEOTIFF_PATH"] = GEOTIFF_PATH
 
     logging.basicConfig(level=logging.INFO)
     app.run(host=args.host, port=args.port, debug=args.debug)

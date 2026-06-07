@@ -7,85 +7,613 @@
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
 <style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
-  #map { position: absolute; top: 0; bottom: 0; width: 100%; }
+:root {
+  --bg: #1a1d23;
+  --bg-panel: #22262e;
+  --bg-hover: #2a2f38;
+  --border: #333842;
+  --text: #d0d4dc;
+  --text-muted: #8891a4;
+  --accent: #4fc3f7;
+  --accent-dim: #2b6f8f;
+  --red: #ef5350;
+  --green: #66bb6a;
+  --orange: #ffa726;
+  --radius: 8px;
+  --sidebar-w: 320px;
+  --transition: 0.2s ease;
+}
 
-  #panel {
-    position: absolute;
-    top: 10px;
-    right: 10px;
-    background: rgba(30, 30, 40, 0.92);
-    color: #eee;
-    padding: 14px 18px;
-    border-radius: 8px;
-    max-width: 300px;
-    font-size: 13px;
-    z-index: 10;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.4);
-    backdrop-filter: blur(8px);
-  }
-  #panel h3 { font-size: 15px; margin-bottom: 8px; color: #4fc3f7; }
-  #panel table { width: 100%; border-collapse: collapse; }
-  #panel td { padding: 3px 6px; }
-  #panel td:last-child { text-align: right; font-weight: 600; }
-  #coords { color: #aaa; font-size: 11px; margin-top: 6px; }
-  #loading { color: #ffa726; font-size: 12px; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
 
-  #legend {
-    position: absolute;
-    bottom: 30px;
-    left: 10px;
-    background: rgba(30, 30, 40, 0.90);
-    color: #ccc;
-    padding: 10px 14px;
-    border-radius: 6px;
-    font-size: 11px;
-    z-index: 10;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-  }
-  #legend .bar {
-    width: 200px;
-    height: 12px;
-    border-radius: 6px;
-    margin: 4px 0;
-    background: linear-gradient(to right,
-      rgba(0,3,80,0.6) 0%, rgba(0,50,200,0.8) 10%,
-      rgba(0,180,200,0.8) 30%, rgba(0,230,130,0.8) 50%,
-      rgba(230,200,0,0.8) 70%, rgba(255,100,0,0.8) 90%,
-      rgba(255,0,0,0.8) 100%);
-  }
-  #legend .labels {
-    display: flex;
-    justify-content: space-between;
-    width: 200px;
-  }
-  #legend h4 { margin-bottom: 2px; color: #4fc3f7; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+#map {
+  position: absolute;
+  top: 0; bottom: 0;
+  left: var(--sidebar-w); right: 0;
+  transition: left var(--transition);
+}
+#map.sidebar-collapsed { left: 0; }
+
+/* ── Sidebar ─────────────────────────────────────────────── */
+
+#sidebar {
+  position: absolute;
+  top: 0; left: 0; bottom: 0;
+  width: var(--sidebar-w);
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  z-index: 100;
+  transition: transform var(--transition);
+  overflow: hidden;
+}
+#sidebar.collapsed { transform: translateX(calc(-1 * var(--sidebar-w))); }
+
+#sidebar-toggle {
+  position: absolute;
+  top: 12px; left: var(--sidebar-w);
+  width: 28px; height: 28px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-left: none;
+  border-radius: 0 6px 6px 0;
+  color: var(--text);
+  cursor: pointer;
+  z-index: 110;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px;
+  transition: left var(--transition);
+}
+#sidebar.collapsed ~ #sidebar-toggle { left: 0; border-left: 1px solid var(--border); border-radius: 0 6px 6px 0; }
+
+/* ── Sidebar header / logo ──────────────────────────────── */
+
+.sidebar-header {
+  padding: 20px 20px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.logo {
+  display: flex; align-items: center; gap: 10px;
+}
+.logo-icon {
+  width: 40px; height: 40px;
+  background: linear-gradient(135deg, #1a5276, #2e86c1);
+  border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 20px;
+  flex-shrink: 0;
+}
+.logo-text h2 {
+  font-size: 14px; font-weight: 700; color: #fff; line-height: 1.2;
+}
+.logo-text span {
+  font-size: 11px; color: var(--text-muted);
+}
+
+/* ── Sidebar sections ───────────────────────────────────── */
+
+.sidebar-body { flex: 1; overflow-y: auto; padding: 0 16px 16px; }
+.sidebar-body::-webkit-scrollbar { width: 4px; }
+.sidebar-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+.section {
+  margin-top: 16px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.section-header {
+  padding: 10px 14px;
+  background: var(--bg-hover);
+  font-size: 12px; font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  display: flex; justify-content: space-between; align-items: center;
+  user-select: none;
+}
+.section-header:hover { color: var(--text); }
+.section-header .arrow { transition: transform var(--transition); font-size: 10px; }
+.section.collapsed .section-body { display: none; }
+.section.collapsed .section-header .arrow { transform: rotate(-90deg); }
+
+.section-body { padding: 12px 14px; font-size: 13px; color: var(--text-muted); line-height: 1.5; }
+.section-body p { margin-bottom: 6px; }
+.section-body a { color: var(--accent); text-decoration: none; }
+.section-body a:hover { text-decoration: underline; }
+
+/* ── Query result table ─────────────────────────────────── */
+
+.query-table { width: 100%; border-collapse: collapse; }
+.query-table td { padding: 4px 0; font-size: 13px; }
+.query-table td:first-child { color: var(--text-muted); }
+.query-table td:last-child { text-align: right; font-weight: 600; color: var(--text); }
+.query-table .val-power { color: var(--accent); }
+.query-coords { font-size: 11px; color: var(--text-muted); margin-top: 6px; }
+.query-empty { font-size: 12px; color: var(--text-muted); font-style: italic; }
+
+/* ── Layer opacity slider ───────────────────────────────── */
+
+.opacity-row {
+  display: flex; align-items: center; gap: 10px;
+}
+.opacity-row label { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+.opacity-row input[type=range] { flex: 1; accent-color: var(--accent); }
+.opacity-row span { font-size: 12px; color: var(--text); min-width: 32px; text-align: right; }
+
+/* ── Stats badges ───────────────────────────────────────── */
+
+.stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.stat-badge {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  text-align: center;
+}
+.stat-badge .val { font-size: 16px; font-weight: 700; color: var(--accent); }
+.stat-badge .lbl { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+
+/* ── Right toolbar ──────────────────────────────────────── */
+
+#toolbar {
+  position: absolute;
+  top: 12px; right: 12px;
+  display: flex; flex-direction: column; gap: 6px;
+  z-index: 50;
+}
+.tool-btn {
+  width: 40px; height: 40px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 16px;
+  display: flex; align-items: center; justify-content: center;
+  transition: all var(--transition);
+}
+.tool-btn:hover { color: var(--text); border-color: var(--text-muted); background: var(--bg-hover); }
+.tool-btn.active { color: #fff; border-color: var(--accent); background: var(--accent-dim); }
+.tool-btn.danger:hover { color: var(--red); border-color: var(--red); }
+
+.tool-label {
+  position: absolute;
+  right: 48px; top: 50%;
+  transform: translateY(-50%);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 11px; color: var(--text);
+  white-space: nowrap; pointer-events: none;
+  opacity: 0; transition: opacity var(--transition);
+}
+.tool-btn:hover .tool-label { opacity: 1; }
+
+/* ── Measurement display ────────────────────────────────── */
+
+#measure-display {
+  position: absolute;
+  bottom: 80px; right: 12px;
+  background: var(--bg-panel);
+  border: 1px solid var(--accent-dim);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  font-size: 13px; color: var(--text);
+  z-index: 50;
+  display: none;
+  min-width: 180px;
+}
+#measure-display .m-value { font-size: 18px; font-weight: 700; color: var(--accent); }
+#measure-display .m-label { font-size: 11px; color: var(--text-muted); }
+
+/* ── Legend ─────────────────────────────────────────────── */
+
+#legend {
+  position: absolute;
+  bottom: 24px; left: calc(var(--sidebar-w) + 12px);
+  background: rgba(34, 38, 46, 0.92);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  font-size: 11px; color: var(--text-muted);
+  z-index: 50;
+  backdrop-filter: blur(8px);
+  transition: left var(--transition);
+}
+#map.sidebar-collapsed ~ #legend { left: 12px; }
+
+#legend .bar {
+  width: 220px; height: 10px; border-radius: 5px; margin: 4px 0;
+  background: linear-gradient(to right,
+    rgba(0,3,80,0.6) 0%, rgba(0,50,200,0.8) 10%,
+    rgba(0,180,200,0.8) 30%, rgba(0,230,130,0.8) 50%,
+    rgba(230,200,0,0.8) 70%, rgba(255,100,0,0.8) 90%,
+    rgba(255,0,0,0.8) 100%);
+}
+#legend .labels { display: flex; justify-content: space-between; width: 220px; }
+#legend .legend-title { color: var(--accent); font-weight: 600; margin-bottom: 2px; }
+
+/* ── MapLibre overrides ─────────────────────────────────── */
+
+.maplibregl-ctrl-top-left  { left: var(--sidebar-w); transition: left var(--transition); }
+#map.sidebar-collapsed ~ .maplibregl-ctrl-top-left { left: 0; }
+
+/* ── Responsive ─────────────────────────────────────────── */
+
+@media (max-width: 600px) {
+  :root { --sidebar-w: 100vw; }
+  #sidebar:not(.collapsed) ~ #map { left: 0; visibility: hidden; }
+}
 </style>
 </head>
 <body>
 
-<div id="map"></div>
+<!-- ── Sidebar ────────────────────────────────────────────── -->
 
-<div id="panel">
-  <h3>Tidal Power Density</h3>
-  <div id="loading" style="display:none">Querying&hellip;</div>
-  <table>
-    <tr><td>Power density</td><td id="val-power">&mdash;</td></tr>
-    <tr><td>Depth</td><td id="val-depth">&mdash;</td></tr>
-  </table>
-  <div id="coords"></div>
+<aside id="sidebar">
+  <div class="sidebar-header">
+    <div class="logo">
+      <div class="logo-icon">🌊</div>
+      <div class="logo-text">
+        <h2>Philippine Tidal Energy</h2>
+        <span>Open-Source Assessment</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="sidebar-body">
+
+    <div class="section" id="sec-about">
+      <div class="section-header" onclick="toggleSection('sec-about')">
+        About <span class="arrow">▾</span>
+      </div>
+      <div class="section-body">
+        <p>Time-averaged tidal-current power density for the Philippine archipelago, computed with a 2D shallow-water hydrodynamic model.</p>
+        <p>Click anywhere on the map to query the power density at that location.</p>
+        <p style="margin-top:8px"><a href="/api/download/tidal_power_density.tif">Download GeoTIFF →</a></p>
+      </div>
+    </div>
+
+    <div class="section" id="sec-query">
+      <div class="section-header" onclick="toggleSection('sec-query')">
+        Query Result <span class="arrow">▾</span>
+      </div>
+      <div class="section-body">
+        <table class="query-table">
+          <tr><td>Power density</td><td id="val-power" class="val-power">—</td></tr>
+          <tr><td>Coordinates</td><td id="val-coords">—</td></tr>
+        </table>
+        <div class="query-coords" id="query-msg">Click the map to query</div>
+      </div>
+    </div>
+
+    <div class="section" id="sec-stats">
+      <div class="section-header" onclick="toggleSection('sec-stats')">
+        Statistics <span class="arrow">▾</span>
+      </div>
+      <div class="section-body">
+        <div class="stats-grid">
+          <div class="stat-badge"><div class="val" id="stat-max">—</div><div class="lbl">Max W/m²</div></div>
+          <div class="stat-badge"><div class="val" id="stat-mean">—</div><div class="lbl">Mean W/m²</div></div>
+          <div class="stat-badge"><div class="val" id="stat-p95">—</div><div class="lbl">P95 W/m²</div></div>
+          <div class="stat-badge"><div class="val" id="stat-min">—</div><div class="lbl">Min W/m²</div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section" id="sec-layers">
+      <div class="section-header" onclick="toggleSection('sec-layers')">
+        Layer Controls <span class="arrow">▾</span>
+      </div>
+      <div class="section-body">
+        <div class="opacity-row">
+          <label>Opacity</label>
+          <input type="range" id="opacity-slider" min="0" max="100" value="75" oninput="setOpacity(this.value)">
+          <span id="opacity-val">75%</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</aside>
+
+<button id="sidebar-toggle" onclick="toggleSidebar()" title="Toggle sidebar">◀</button>
+
+<!-- ── Toolbar ────────────────────────────────────────────── -->
+
+<div id="toolbar">
+  <button class="tool-btn" id="btn-distance" onclick="startMeasure('distance')" title="Measure distance">
+    📏<span class="tool-label">Measure distance</span>
+  </button>
+  <button class="tool-btn" id="btn-area" onclick="startMeasure('area')" title="Measure area">
+    ⬡<span class="tool-label">Measure area</span>
+  </button>
+  <button class="tool-btn danger" id="btn-clear" onclick="clearMeasure()" title="Clear measurements">
+    ✕<span class="tool-label">Clear</span>
+  </button>
 </div>
 
+<div id="measure-display">
+  <div class="m-label">Measurement</div>
+  <div class="m-value" id="measure-value">0 m</div>
+</div>
+
+<!-- ── Map ─────────────────────────────────────────────────── -->
+
+<div id="map"></div>
+
+<!-- ── Legend ──────────────────────────────────────────────── -->
+
 <div id="legend">
-  <h4>Mean Power Density (W/m&sup2;)</h4>
+  <div class="legend-title">Mean Power Density (W/m²)</div>
   <div class="bar"></div>
   <div class="labels">
     <span>0</span><span>400</span><span>800</span><span>1200</span><span>1600+</span>
   </div>
 </div>
 
+<!-- ── Script ──────────────────────────────────────────────── -->
+
 <script>
+// ── State ───────────────────────────────────────────────────
+
+let measureMode = null;         // 'distance' | 'area' | null
+let measurePoints = [];         // [{lng, lat}]
+let measureSourceId = 'measure-source';
+let measureLineId = 'measure-line';
+let measureFillId = 'measure-fill';
+let measurePointId = 'measure-points';
+
+// ── Sidebar ─────────────────────────────────────────────────
+
+function toggleSidebar() {
+  const sidebar = document.getElementById('sidebar');
+  const mapEl = document.getElementById('map');
+  const toggle = document.getElementById('sidebar-toggle');
+  sidebar.classList.toggle('collapsed');
+  mapEl.classList.toggle('sidebar-collapsed');
+  toggle.innerHTML = sidebar.classList.contains('collapsed') ? '▶' : '◀';
+  setTimeout(() => map.resize(), 300);
+}
+
+function toggleSection(id) {
+  document.getElementById(id).classList.toggle('collapsed');
+}
+
+// ── Opacity ─────────────────────────────────────────────────
+
+function setOpacity(val) {
+  const opacity = parseInt(val) / 100;
+  document.getElementById('opacity-val').textContent = val + '%';
+  if (window._tidalLayerReady && window._map) {
+    window._map.setPaintProperty('tidal-layer', 'raster-opacity', opacity);
+  }
+}
+
+// ── Geodesic calculations (Haversine) ──────────────────────
+
+function toRad(d) { return d * Math.PI / 180; }
+
+function haversineDistance(a, b) {
+  const R = 6371000;
+  const dLat = toRad(b.lat - a.lat);
+  const dLon = toRad(b.lng - a.lng);
+  const sinDLat = Math.sin(dLat / 2);
+  const sinDLon = Math.sin(dLon / 2);
+  const h = sinDLat * sinDLat + Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * sinDLon * sinDLon;
+  return R * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+}
+
+function polygonArea(points) {
+  // Spherical polygon area (Shoelace on sphere approximation)
+  if (points.length < 3) return 0;
+  const R = 6371000;
+  let area = 0;
+  const n = points.length;
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    const xi = toRad(points[i].lng) * Math.cos(toRad(points[i].lat));
+    const yi = toRad(points[i].lat);
+    const xj = toRad(points[j].lng) * Math.cos(toRad(points[j].lat));
+    const yj = toRad(points[j].lat);
+    area += xi * yj - xj * yi;
+  }
+  return Math.abs(area / 2) * R * R;
+}
+
+function formatDistance(m) {
+  if (m < 1000) return Math.round(m) + ' m';
+  return (m / 1000).toFixed(2) + ' km';
+}
+
+function formatArea(m2) {
+  if (m2 < 1e6) return Math.round(m2) + ' m²';
+  return (m2 / 1e6).toFixed(2) + ' km²';
+}
+
+// ── Measurement ─────────────────────────────────────────────
+
+function startMeasure(mode) {
+  if (measureMode === mode) {
+    stopMeasure();
+    return;
+  }
+  stopMeasure();
+  measureMode = mode;
+  measurePoints = [];
+  updateMeasureUI();
+  document.getElementById('btn-' + mode).classList.add('active');
+  document.getElementById('measure-display').style.display = 'block';
+}
+
+function stopMeasure() {
+  if (measureMode) {
+    document.getElementById('btn-' + measureMode).classList.remove('active');
+  }
+  measureMode = null;
+  measurePoints = [];
+  clearMeasure();
+}
+
+function clearMeasure() {
+  const map = window._map;
+  if (!map) return;
+  try { map.removeLayer(measurePointId); } catch(e) {}
+  try { map.removeLayer(measureLineId); } catch(e) {}
+  try { map.removeLayer(measureFillId); } catch(e) {}
+  try { map.removeSource(measureSourceId); } catch(e) {}
+  measurePoints = [];
+  updateMeasureUI();
+  document.getElementById('btn-distance').classList.remove('active');
+  document.getElementById('btn-area').classList.remove('active');
+  document.getElementById('measure-display').style.display = 'none';
+  measureMode = null;
+}
+
+function addMeasurePoint(lngLat) {
+  if (!measureMode) return;
+  measurePoints.push({ lng: lngLat.lng, lat: lngLat.lat });
+  updateMeasureLayer();
+  updateMeasureUI();
+}
+
+function updateMeasureLayer() {
+  const map = window._map;
+  if (!map || measurePoints.length === 0) return;
+
+  const geojson = {
+    type: 'FeatureCollection',
+    features: []
+  };
+
+  if (measureMode === 'distance') {
+    if (measurePoints.length >= 2) {
+      geojson.features.push({
+        type: 'Feature',
+        geometry: {
+          type: 'LineString',
+          coordinates: measurePoints.map(p => [p.lng, p.lat])
+        }
+      });
+    }
+  } else if (measureMode === 'area') {
+    if (measurePoints.length >= 3) {
+      const coords = measurePoints.map(p => [p.lng, p.lat]);
+      coords.push(coords[0]); // close polygon
+      geojson.features.push({
+        type: 'Feature',
+        geometry: { type: 'Polygon', coordinates: [coords] }
+      });
+    }
+    if (measurePoints.length >= 2) {
+      geojson.features.push({
+        type: 'Feature',
+        geometry: {
+          type: 'LineString',
+          coordinates: measurePoints.map(p => [p.lng, p.lat])
+        }
+      });
+    }
+  }
+
+  // Points
+  geojson.features.push({
+    type: 'Feature',
+    geometry: {
+      type: 'MultiPoint',
+      coordinates: measurePoints.map(p => [p.lng, p.lat])
+    }
+  });
+
+  // Create or update source
+  if (map.getSource(measureSourceId)) {
+    map.getSource(measureSourceId).setData(geojson);
+  } else {
+    map.addSource(measureSourceId, { type: 'geojson', data: geojson });
+
+    // Fill layer (area)
+    map.addLayer({
+      id: measureFillId,
+      type: 'fill',
+      source: measureSourceId,
+      paint: {
+        'fill-color': '#4fc3f7',
+        'fill-opacity': 0.2,
+      },
+      filter: ['==', '$type', 'Polygon']
+    });
+
+    // Line layer
+    map.addLayer({
+      id: measureLineId,
+      type: 'line',
+      source: measureSourceId,
+      paint: {
+        'line-color': '#4fc3f7',
+        'line-width': 2.5,
+        'line-dasharray': [4, 2],
+      },
+      filter: ['==', '$type', 'LineString']
+    });
+
+    // Points layer
+    map.addLayer({
+      id: measurePointId,
+      type: 'circle',
+      source: measureSourceId,
+      paint: {
+        'circle-radius': 5,
+        'circle-color': '#fff',
+        'circle-stroke-color': '#4fc3f7',
+        'circle-stroke-width': 2,
+      },
+      filter: ['==', '$type', 'MultiPoint']
+    });
+  }
+}
+
+function updateMeasureUI() {
+  const display = document.getElementById('measure-display');
+  const valueEl = document.getElementById('measure-value');
+  if (!measureMode || measurePoints.length < 2) {
+    if (measurePoints.length === 0) {
+      display.style.display = measureMode ? 'block' : 'none';
+      valueEl.textContent = measureMode === 'area' ? 'Click to draw' : 'Click to measure';
+    } else {
+      valueEl.textContent = 'Click to add point';
+    }
+    return;
+  }
+
+  display.style.display = 'block';
+
+  if (measureMode === 'distance') {
+    let total = 0;
+    for (let i = 1; i < measurePoints.length; i++) {
+      total += haversineDistance(measurePoints[i - 1], measurePoints[i]);
+    }
+    valueEl.textContent = formatDistance(total);
+  } else if (measureMode === 'area') {
+    if (measurePoints.length >= 3) {
+      valueEl.textContent = formatArea(polygonArea(measurePoints));
+    } else {
+      valueEl.textContent = 'Add ' + (3 - measurePoints.length) + ' more point(s)';
+    }
+  }
+}
+
+// ── Main ────────────────────────────────────────────────────
+
 (async function () {
   const apiBase = window.location.origin + '/api';
 
@@ -93,6 +621,8 @@
     container: 'map',
     center: [122.5, 12.5],
     zoom: 6,
+    minZoom: 4,
+    maxZoom: 14,
     style: {
       version: 8,
       sources: {
@@ -100,7 +630,7 @@
           type: 'raster',
           tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
           tileSize: 256,
-          attribution: '&copy; OpenStreetMap contributors',
+          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
           maxzoom: 19,
         },
       },
@@ -111,8 +641,77 @@
   });
 
   map.addControl(new maplibregl.NavigationControl(), 'top-left');
+  map.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-right');
 
-  // ---- Load metadata and add tidal layer ----
+  window._map = map;
+
+  // ── Map click: query or measure ──────────────────────────
+
+  map.on('click', async (e) => {
+    if (measureMode) {
+      addMeasurePoint(e.lngLat);
+      return;
+    }
+
+    const { lat, lng } = e.lngLat;
+    document.getElementById('query-msg').textContent = 'Querying…';
+
+    try {
+      const r = await fetch(`${apiBase}/query?lat=${lat.toFixed(6)}&lon=${lng.toFixed(6)}`);
+      if (r.ok) {
+        const d = await r.json();
+        document.getElementById('val-power').textContent = d.power_density_Wm2.toFixed(1) + ' W/m²';
+        document.getElementById('val-coords').textContent =
+          lat.toFixed(4) + '°N, ' + lng.toFixed(4) + '°E';
+        document.getElementById('query-msg').textContent = '';
+      } else {
+        document.getElementById('val-power').textContent = '—';
+        document.getElementById('val-coords').textContent =
+          lat.toFixed(4) + '°N, ' + lng.toFixed(4) + '°E';
+        document.getElementById('query-msg').textContent = '(land / no data)';
+      }
+    } catch (err) {
+      document.getElementById('query-msg').textContent = '(error querying)';
+    }
+  });
+
+  // Double-click: finish measurement
+  map.on('dblclick', (e) => {
+    if (measureMode) {
+      e.preventDefault();
+      stopMeasure();
+    }
+  });
+
+  // Right-click: cancel measurement
+  map.on('contextmenu', (e) => {
+    if (measureMode) {
+      e.preventDefault();
+      stopMeasure();
+    }
+  });
+
+  // Remove last point with right-click during measurement
+  map.on('mousedown', (e) => {
+    if (measureMode && e.originalEvent.button === 2 && measurePoints.length > 0) {
+      // handled by contextmenu above — just stop
+    }
+  });
+
+  // Cursor
+  map.on('mousemove', (e) => {
+    map.getCanvas().style.cursor = measureMode ? 'crosshair' : 'pointer';
+  });
+
+  // Keyboard: Escape to cancel
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && measureMode) {
+      stopMeasure();
+    }
+  });
+
+  // ── Load metadata and tidal layer ────────────────────────
+
   let meta = null;
   try {
     const resp = await fetch(apiBase + '/metadata');
@@ -137,42 +736,23 @@
       paint: { 'raster-opacity': 0.75 },
     });
 
-    document.getElementById('legend').style.display = 'block';
+    window._tidalLayerReady = true;
+
+    // Populate stats
+    if (meta.stats) {
+      document.getElementById('stat-max').textContent = meta.stats.max.toFixed(0);
+      document.getElementById('stat-mean').textContent = meta.stats.mean.toFixed(0);
+      document.getElementById('stat-p95').textContent = meta.stats.p95.toFixed(0);
+      document.getElementById('stat-min').textContent = meta.stats.min.toFixed(0);
+    }
   } else {
     document.getElementById('legend').style.display = 'none';
     document.getElementById('val-power').textContent = '(no data)';
+    document.getElementById('stat-max').textContent = 'N/A';
+    document.getElementById('stat-mean').textContent = 'N/A';
+    document.getElementById('stat-p95').textContent = 'N/A';
+    document.getElementById('stat-min').textContent = 'N/A';
   }
-
-  // ---- Click handler ----
-  map.on('click', async (e) => {
-    const { lat, lng } = e.lngLat;
-    document.getElementById('coords').textContent =
-      `${lat.toFixed(4)}&deg;N, ${lng.toFixed(4)}&deg;E`;
-
-    const loading = document.getElementById('loading');
-    loading.style.display = 'block';
-
-    try {
-      const r = await fetch(`${apiBase}/query?lat=${lat.toFixed(6)}&lon=${lng.toFixed(6)}`);
-      if (r.ok) {
-        const d = await r.json();
-        document.getElementById('val-power').textContent =
-          d.power_density_Wm2.toFixed(1) + ' W/m²';
-        document.getElementById('val-depth').textContent =
-          d.depth_m !== undefined ? d.depth_m.toFixed(0) + ' m' : '—';
-      } else {
-        document.getElementById('val-power').textContent = '(land / no data)';
-        document.getElementById('val-depth').textContent = '—';
-      }
-    } catch (err) {
-      document.getElementById('val-power').textContent = '(error)';
-    }
-    loading.style.display = 'none';
-  });
-
-  map.on('mousemove', (e) => {
-    map.getCanvas().style.cursor = meta && meta.available ? 'crosshair' : '';
-  });
 })();
 </script>
 
