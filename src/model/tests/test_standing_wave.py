@@ -4,8 +4,17 @@ Validates that the model correctly simulates a seiche with period
 matching Merian's formula: T = 2L / sqrt(g * h).
 """
 
+import warnings
+warnings.filterwarnings(
+    "ignore", message="numpy.ndarray size changed, may indicate binary incompatibility"
+)
+
 import numpy as np
-import pytest
+
+try:
+    import pytest
+except ImportError:
+    pytest = None  # type: ignore[assignment]
 
 from model.grid import StructuredGrid
 from model.solver import ShallowWaterSolver
@@ -49,8 +58,6 @@ def test_standing_wave_period():
     grid.mask_v[:] = True
     grid.open_boundary[:] = False
     grid.f[:] = 0.0
-    grid.f_u[:] = 0.0
-    grid.f_v[:] = 0.0
 
     T_expected = _merian_period(L, H, n_mode=1)
 
@@ -101,7 +108,10 @@ def test_standing_wave_period():
             f"got {measured_period:.1f} s (error {rel_error*100:.1f}%)"
         )
     else:
-        pytest.skip("Not enough zero crossings detected")
+        if pytest:
+            pytest.skip("Not enough zero crossings detected")
+        else:
+            assert False, f"Not enough zero crossings detected: {len(zero_crossings)}"
 
 
 def test_standing_wave_no_coriolis_damping():
@@ -124,8 +134,6 @@ def test_standing_wave_no_coriolis_damping():
     grid.mask_v[:] = True
     grid.open_boundary[:] = False
     grid.f[:] = 0.0
-    grid.f_u[:] = 0.0
-    grid.f_v[:] = 0.0
 
     solver = ShallowWaterSolver(grid, cd=0.0, ah=0.0, advection=False)
 

@@ -1,7 +1,16 @@
 """Test: mass and energy conservation in the solver."""
 
+import warnings
+warnings.filterwarnings(
+    "ignore", message="numpy.ndarray size changed, may indicate binary incompatibility"
+)
+
 import numpy as np
-import pytest
+
+try:
+    import pytest
+except ImportError:
+    pytest = None  # type: ignore[assignment]
 
 from model.grid import StructuredGrid
 from model.solver import ShallowWaterSolver
@@ -27,8 +36,6 @@ def test_mass_conservation_closed_basin():
     grid.mask_v[:] = True
     grid.open_boundary[:] = False
     grid.f[:] = 0.0
-    grid.f_u[:] = 0.0
-    grid.f_v[:] = 0.0
 
     x_c = np.arange(nx) * dx + dx / 2
     y_c = np.arange(ny) * dy + dy / 2
@@ -80,8 +87,6 @@ def test_mass_conservation_with_friction():
     grid.mask_v[:] = True
     grid.open_boundary[:] = False
     grid.f[:] = 0.0
-    grid.f_u[:] = 0.0
-    grid.f_v[:] = 0.0
 
     x_c = np.arange(nx) * dx + dx / 2
     eta0_1d = 0.3 * np.sin(2 * np.pi * x_c / (nx * dx))
@@ -125,8 +130,6 @@ def test_power_density_nonnegative():
     grid.mask_u[:] = True
     grid.mask_v[:] = True
     grid.f[:] = 0.0
-    grid.f_u[:] = 0.0
-    grid.f_v[:] = 0.0
 
     solver = ShallowWaterSolver(grid, cd=0.0025, ah=0.0, advection=False)
 

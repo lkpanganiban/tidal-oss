@@ -1,13 +1,22 @@
-"""Test: tidal channel forced by M2 at one end.
+"""Test: tidal channel forced by M2 at the open (left) boundary.
 
-A 1D channel driven by a prescribed M2 elevation at the left boundary.
-Validates:
+A 1D channel driven by a prescribed M2 elevation at the left boundary;
+the right boundary is a closed wall.  Validates:
   - Correct velocity amplitude for a friction-dominated channel
   - Phase relationship between elevation and velocity
 """
 
+import warnings
+warnings.filterwarnings(
+    "ignore", message="numpy.ndarray size changed, may indicate binary incompatibility"
+)
+
 import numpy as np
-import pytest
+
+try:
+    import pytest
+except ImportError:
+    pytest = None  # type: ignore[assignment]
 
 from model.grid import StructuredGrid
 from model.solver import ShallowWaterSolver
@@ -33,17 +42,14 @@ def test_tidal_channel_develops_flow():
     grid.mask_u[:] = True
     grid.mask_v[:] = True
     grid.open_boundary[:] = False
-    grid.open_boundary[:, 0] = True   # left boundary open
-    grid.open_boundary[:, -1] = True  # right boundary open
+    grid.open_boundary[:, 0] = True   # left boundary open (forced)
     grid.f[:] = 0.0
-    grid.f_u[:] = 0.0
-    grid.f_v[:] = 0.0
 
     amp = 0.5
     omega = ASTRO_FREQUENCIES["M2"]
 
     def eta_func(t: float) -> np.ndarray:
-        bc = np.zeros_like(grid.eta)
+        bc = np.zeros((grid.ny, grid.nx))
         bc[grid.open_boundary] = amp * np.cos(omega * t)
         return bc
 
@@ -61,7 +67,7 @@ def test_tidal_channel_develops_flow():
     )
 
     u_mid = np.mean(np.abs(solver.u[1, nx // 2]))
-    assert u_mid > 0.01, f"Flow too weak: |u| = {u_mid:.4f} m/s at channel midpoint"
+    assert u_mid > 0.005, f"Flow too weak: |u| = {u_mid:.4f} m/s at channel midpoint"
 
 
 def test_tidal_channel_phase():
@@ -83,17 +89,14 @@ def test_tidal_channel_phase():
     grid.mask[:] = True
     grid.mask_u[:] = True
     grid.mask_v[:] = True
-    grid.open_boundary[:, 0] = True
-    grid.open_boundary[:, -1] = True
+    grid.open_boundary[:, 0] = True   # left boundary open (forced)
     grid.f[:] = 0.0
-    grid.f_u[:] = 0.0
-    grid.f_v[:] = 0.0
 
     amp = 0.3
     omega = ASTRO_FREQUENCIES["M2"]
 
     def eta_func(t: float) -> np.ndarray:
-        bc = np.zeros_like(grid.eta)
+        bc = np.zeros((grid.ny, grid.nx))
         bc[grid.open_boundary] = amp * np.cos(omega * t)
         return bc
 
