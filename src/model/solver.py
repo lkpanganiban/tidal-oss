@@ -283,22 +283,21 @@ class ShallowWaterSolver:
 
     @staticmethod
     def _laplacian(phi: np.ndarray, dx: float, dy: float) -> np.ndarray:
-        """Central-difference Laplacian at interior points."""
+        """Central-difference Laplacian at interior points.
+
+        Computes the 5-point stencil ``\u03d5_xx + φ_yy`` on interior cells,
+        leaving the boundary rows/columns at zero (they are handled by the
+        velocity masks elsewhere).  Only called when ``ah > 0``.
+        """
         lap = np.zeros_like(phi)
-        interior_slc = tuple(
-            slice(1, s - 1) if s > 2 else slice(0, 0) for s in phi.shape
-        )
         if phi.ndim == 2:
-            j_slc, i_slc = interior_slc
-            lap[j_slc, i_slc] = (
-                phi[j_slc, i_slc + 1]
-                + phi[j_slc, i_slc - 1]
-                - 2.0 * phi[j_slc, i_slc]
-            ) / dx**2 + (
-                phi[j_slc + 1, i_slc]
-                + phi[j_slc - 1, i_slc]
-                - 2.0 * phi[j_slc, i_slc]
-            ) / dy**2
+            ny, nx = phi.shape
+            if ny >= 3 and nx >= 3:
+                lap[1:-1, 1:-1] = (
+                    phi[1:-1, 2:] + phi[1:-1, :-2] - 2.0 * phi[1:-1, 1:-1]
+                ) / dx**2 + (
+                    phi[2:, 1:-1] + phi[:-2, 1:-1] - 2.0 * phi[1:-1, 1:-1]
+                ) / dy**2
         return lap
 
     def _advection_u(self) -> np.ndarray:
