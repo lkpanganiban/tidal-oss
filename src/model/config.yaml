@@ -34,7 +34,11 @@ tidal_forcing:
 output:
   dir: output/
   save_interval_hours: 1
+  results_nc: results.nc
   final_geotiff: tidal_power_density.tif
+  max_speed_geotiff: max_current_speed.tif
+  bathymetry_geotiff: bathymetry.tif
+  distance_geotiff: distance_to_coast.tif
   hotspots_geojson: hotspots.geojson
   hotspot_threshold: 200.0      # W/m² minimum for hotspot export
 

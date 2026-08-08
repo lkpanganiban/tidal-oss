@@ -81,7 +81,12 @@ The run produces in `output/`:
 docker compose up -d
 ```
 
-Open **http://localhost:5000** — the map displays a tidal power density overlay with click-to-query values.
+Open **http://localhost:5000** — the map opens centred on **Baguio City** and
+displays the full MSP workspace: switchable basemaps (OpenStreetMap / Esri
+satellite / dark), multi-layer overlays (power, current speed, bathymetry,
+distance to coast), click-to-query with tidal curves, **turbine performance
+modelling for 10 real tidal in-stream turbines**, polygon site assessment,
+hotspot ranking, and resource screening filters.
 
 ### 5. Verify
 
@@ -172,13 +177,40 @@ jupyter notebook src/notebooks/
 
 ## API Endpoints
 
+The web service is a **marine spatial planning (MSP) tool** for tidal
+current energy: multi-layer visualisation, site inspection with tidal
+curves, polygon-based site assessment, and filtered resource screening.
+
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/` | GET | MapLibre GL JS interactive map |
-| `/api/metadata` | GET | GeoTIFF bounds, CRS, stats, max zoom |
-| `/api/query?lat=&lon=` | GET | Power-density value at a point (W/m²) |
-| `/api/tiles/{z}/{x}/{y}.png` | GET | Colormapped 256×256 PNG tiles |
-| `/api/download/tidal_power_density.tif` | GET | Download the full GeoTIFF |
+| `/api/layers` | GET | Metadata for all layers (bounds, stats, units, legend) |
+| `/api/tiles/{layer}/{z}/{x}/{y}.png` | GET | Colormapped 256×256 PNG tiles (`power` \| `speed` \| `depth` \| `distance`) |
+| `/api/tiles/{z}/{x}/{y}.png` | GET | Alias for the power layer |
+| `/api/query?lat=&lon=&layer=` | GET | Value at a point for any layer |
+| `/api/timeseries?lat=&lon=` | GET | Tidal elevation / current-speed time series from `results.nc` |
+| `/api/turbines` | GET | The sample set of the world's top-10 tidal in-stream turbines (specs + power curves) |
+| `/api/turbine_performance?lat=&lon=` | GET | Simulated energy / capacity factor / AEP for every turbine at a site |
+| `/api/hotspots?min=&limit=` | GET | Ranked hotspot sites (GeoJSON) |
+| `/api/area_stats` | POST | `{"polygon": [[lon,lat],…], "efficiency": 0.4}` → resource stats within a polygon |
+| `/api/resource?min_power=&depth_min=&depth_max=&efficiency=` | GET | Filtered-domain totals (area, MW, AEP GWh/yr) |
+| `/api/download/{file}` | GET | Download GeoTIFFs, `hotspots.geojson`, or `results.nc` |
+
+## Model outputs
+
+`python -m src.model.run` now produces a full MSP layer set in `output/`:
+
+| File | Layer | Units |
+|------|-------|-------|
+| `tidal_power_density.tif` | Mean power density | W/m² |
+| `max_current_speed.tif` | Max depth-averaged current speed | m/s |
+| `bathymetry.tif` | Bathymetric depth | m |
+| `distance_to_coast.tif` | Distance to nearest coast | km |
+| `results.nc` | Streaming time series (η, u, v, power) | — |
+| `hotspots.geojson` | Cells above the hotspot threshold | — |
+
+Run `python generate_test_data.py` to generate the same layer set from
+synthetic data for a data-free demo.
 
 ## Model Configuration
 
@@ -252,6 +284,7 @@ mypy src/model src/web
 | Symptom | Fix |
 |---------|-----|
 | Docker build fails at `pip install rasterio` | The image needs `libgdal-dev`; ensure it installs before pip |
+| Dev server drops requests / timeseries 500 under load | `netCDF4` is not thread-safe — the app serialises reads with a lock; use `docker compose up` (gunicorn) for production |
 | `max|η|=0.00 m \| max|U|=0.00 m/s` in logs | Config points to a bathymetry file but no open-boundary cells exist — ensure `land_shapefile` is set or use `null` for the elevation-based fallback |
 | Model produces NaN | CFL safety factor too high — lower `cfl_safety` to 0.25 or explicitly set `dt` in config |
 | `bathymetry.path` not found warning | Expected on a fresh clone — the model falls back to a synthetic grid; download GEBCO for production runs |

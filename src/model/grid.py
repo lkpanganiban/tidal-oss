@@ -212,6 +212,33 @@ class StructuredGrid:
         return float(np.min(self.h[self.mask])) if self.mask.any() else 0.0
 
 
+def distance_to_coast_km(mask: np.ndarray, dx: float, dy: float) -> np.ndarray:
+    """Distance from every cell to the nearest land cell, in km.
+
+    Parameters
+    ----------
+    mask : ndarray (ny, nx), bool
+        Wet-cell mask (True = water).
+    dx, dy : float
+        Grid spacing in x and y [m].
+
+    Returns
+    -------
+    dist_km : ndarray (ny, nx)
+        Distance to the nearest land cell [km]. Land cells = 0.
+    """
+    from scipy.ndimage import distance_transform_edt
+
+    # scipy's EDT computes, for foreground (nonzero) pixels, the distance to
+    # the nearest background pixel.  Land is the reference (background), so
+    # the water mask is passed as foreground: water cells then report their
+    # distance to the nearest land cell and land cells report 0.
+    if not mask.any() or mask.all():
+        return np.zeros(mask.shape, dtype=np.float64)
+    dist_m = distance_transform_edt(mask, sampling=(dy, dx))
+    return dist_m / 1000.0
+
+
 def _build_u_mask(eta_mask: np.ndarray) -> np.ndarray:
     """Build the velocity mask at u-points from the cell-centre mask.
 

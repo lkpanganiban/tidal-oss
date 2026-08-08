@@ -56,8 +56,14 @@ Philippine archipelago:
 - **Phase A (screening):** A 2D shallow-water finite-difference solver in
   Python + NumPy on a structured Arakawa C-grid.  This is the code in
   `src/model/`.
-- **Phase B (web):** A Flask + MapLibre GL JS map that displays the screening
-  results as an interactive overlay.  This is the code in `src/web/`.
+- **Phase B (web):** A Flask + MapLibre GL JS **marine spatial planning (MSP)**
+  tool: multi-layer overlays (power density, max current speed, bathymetry,
+  distance to coast), click-to-query with tidal curves (Chart.js), polygon
+  site assessment (`/api/area_stats`), ranked hotspots, filtered resource
+  screening (`/api/resource`), and **turbine performance modelling** for the
+  top-10 real tidal in-stream turbines (`/api/turbines`,
+  `/api/turbine_performance` — energy, capacity factor, AEP per turbine).
+  Map opens centred on Baguio City; basemaps OSM / Esri satellite / dark.
 
 The key insight: a fast, coarse Python model finds **hotspots** (straits with
 mean tidal power density ≥ 200 W/m²), then TELEMAC‑2D refines them.
@@ -103,7 +109,7 @@ density $P = \frac12 \rho |U|^3$ in W/m².
 │   │       └── test_config_and_streaming.py  # config validation, streaming, resume
 │   ├── web/                     # web visualisation (Phase B)
 │   │   ├── __init__.py
-│   │   ├── app.py               # Flask API (tiles, query, downloads)
+│   │   ├── app.py               # Flask MSP API (layers, tiles, timeseries, area stats, resource)
 │   │   ├── requirements.txt     # web-only dependencies
 │   │   ├── static/index.html    # MapLibre GL JS interactive map
 │   │   └── tests/test_app.py    # Flask API tests

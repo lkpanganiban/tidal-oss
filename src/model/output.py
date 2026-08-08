@@ -188,6 +188,31 @@ def mean_power_from_netcdf(path: str) -> np.ndarray:
     return power.mean(axis=0)
 
 
+def max_speed_from_netcdf(path: str) -> np.ndarray:
+    """Maximum depth-averaged current speed over all snapshots in *path*.
+
+    Computed from the stored u/v histories; used after a resumed run so
+    the maximum covers the full simulation.
+    """
+    try:
+        from netCDF4 import Dataset
+    except ImportError:
+        raise ImportError(
+            "netCDF4 is required to read model state.  "
+            "Install with: pip install netCDF4"
+        ) from None
+
+    with Dataset(path, "r") as nc:
+        nt = len(nc.dimensions["time"])
+        if nt == 0:
+            raise ValueError(f"No snapshots found in {path}")
+        u = np.asarray(nc["u"][:], dtype=np.float64)
+        v = np.asarray(nc["v"][:], dtype=np.float64)
+    u_c = 0.5 * (u[:, :, :-1] + u[:, :, 1:])
+    v_c = 0.5 * (v[:, :-1, :] + v[:, 1:, :])
+    return np.sqrt(u_c**2 + v_c**2).max(axis=0)
+
+
 def create_results_dataset(
     grid: StructuredGrid,
     times: np.ndarray,
@@ -262,20 +287,26 @@ def write_netcdf(ds: xr.Dataset, path: str):
     ds.to_netcdf(path, mode="w")
 
 
-def write_mean_power_geotiff(
+def write_raster_geotiff(
     grid: StructuredGrid,
-    power_mean: np.ndarray,
+    values: np.ndarray,
     path: str,
+    description: str,
+    nodata: float | None = None,
 ):
-    """Write a time-mean power-density array to a Cloud-Optimised GeoTIFF.
+    """Write any cell-centre field to a Cloud-Optimised GeoTIFF.
 
     Parameters
     ----------
     grid : StructuredGrid
-    power_mean : ndarray (ny, nx)
-        Time-mean power density [W/m²].
+    values : ndarray (ny, nx)
+        Field to write (e.g. depth, max speed, distance to coast).
     path : str
         Output file path (.tif).
+    description : str
+        Band description / long name.
+    nodata : float or None
+        No-data marker (``None`` = no nodata tag).
     """
     try:
         import rasterio
@@ -294,12 +325,11 @@ def write_mean_power_geotiff(
     lat_min = float(lat.min())
     lat_max = float(lat.max())
 
-    ny, nx = power_mean.shape
+    ny, nx = values.shape
     transform = from_bounds(lon_min, lat_min, lon_max, lat_max, nx, ny)
 
-    with rasterio.open(
-        path,
-        "w",
+    kwargs = dict(
+        mode="w",
         driver="COG",
         height=ny,
         width=nx,
@@ -307,11 +337,40 @@ def write_mean_power_geotiff(
         dtype="float32",
         crs="EPSG:4326",
         transform=transform,
-        TILING_SCHEME="GoogleMapsCompatible",
         COMPRESS="LZW",
-    ) as dst:
-        dst.write(power_mean.astype(np.float32), 1)
-        dst.set_band_description(1, "mean tidal-current power density (W/m2)")
+    )
+    if nodata is not None:
+        kwargs["nodata"] = nodata
+
+    with rasterio.open(path, **kwargs) as dst:
+        dst.write(values.astype(np.float32), 1)
+        dst.set_band_description(1, description)
+
+
+def write_mean_power_geotiff(
+    grid: StructuredGrid,
+    power_mean: np.ndarray,
+    path: str,
+):
+    """Write a time-mean power-density array to a Cloud-Optimised GeoTIFF.
+
+    Thin wrapper around :func:`write_raster_geotiff` (kept for backwards
+    compatibility).
+
+    Parameters
+    ----------
+    grid : StructuredGrid
+    power_mean : ndarray (ny, nx)
+        Time-mean power density [W/m²].
+    path : str
+        Output file path (.tif).
+    """
+    write_raster_geotiff(
+        grid,
+        power_mean,
+        path,
+        description="mean tidal-current power density (W/m2)",
+    )
 
 
 def write_hotspots_geojson(

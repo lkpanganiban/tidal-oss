@@ -1163,6 +1163,88 @@ def _gaussian(
     return np.exp(-((xx - cx) ** 2) / (2 * sx**2) - ((yy - cy) ** 2) / (2 * sy**2))
 
 
+def _land_mask_at(lons: np.ndarray, lats: np.ndarray) -> np.ndarray:
+    """Resample the coarse land template onto a lon/lat mesh.
+
+    Returns a float array with 1 = water, 0 = land (matches the template
+    convention).  Shape (len(lats), len(lons)).
+    """
+    lon_min, lon_max = lons.min(), lons.max()
+    lat_min, lat_max = lats.min(), lats.max()
+    lon_grid, lat_grid = np.meshgrid(lons, lats)
+
+    land_lat_edges = np.linspace(lat_max, lat_min, _LAND_TEMPLATE.shape[0] + 1)
+    land_lon_edges = np.linspace(lon_min, lon_max, _LAND_TEMPLATE.shape[1] + 1)
+
+    land_mask = np.zeros((len(lats), len(lons)), dtype=np.float32)
+    for j in range(len(lats)):
+        lat_idx = (
+            np.searchsorted(-land_lat_edges, -lat_grid[j, 0]) - 1
+        )  # descending lat
+        lat_idx = max(0, min(_LAND_TEMPLATE.shape[0] - 1, lat_idx))
+        for i in range(len(lons)):
+            lon_idx = np.searchsorted(land_lon_edges, lon_grid[j, i]) - 1
+            lon_idx = max(0, min(_LAND_TEMPLATE.shape[1] - 1, lon_idx))
+            land_mask[j, i] = _LAND_TEMPLATE[lat_idx, lon_idx]
+    return land_mask
+
+
+def _write_cog(
+    path: str,
+    values: np.ndarray,
+    lon_min: float,
+    lat_min: float,
+    lon_max: float,
+    lat_max: float,
+    description: str,
+    nodata: float | None = None,
+) -> None:
+    """Write a float32 Cloud-Optimised GeoTIFF in EPSG:4326."""
+    import rasterio
+    from rasterio.transform import from_bounds
+
+    ny, nx = values.shape
+    transform = from_bounds(lon_min, lat_min, lon_max, lat_max, nx, ny)
+    kwargs = dict(
+        mode="w",
+        driver="COG",
+        height=ny,
+        width=nx,
+        count=1,
+        dtype="float32",
+        crs="EPSG:4326",
+        transform=transform,
+        COMPRESS="LZW",
+    )
+    if nodata is not None:
+        kwargs["nodata"] = nodata
+    with rasterio.open(path, **kwargs) as dst:
+        dst.write(values.astype(np.float32), 1)
+        dst.set_band_description(1, description)
+
+
+def _grid_setup(
+    lon_min: float,
+    lon_max: float,
+    lat_min: float,
+    lat_max: float,
+    resolution_km: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Return (lons, lats, lon_grid, lat_grid, water_mask)."""
+    km_per_deg = 111.32
+    dx = resolution_km / km_per_deg
+    dy = resolution_km / km_per_deg
+
+    nx = int((lon_max - lon_min) / dx) + 1
+    ny = int((lat_max - lat_min) / dy) + 1
+
+    lons = np.linspace(lon_min, lon_max, nx)
+    lats = np.linspace(lat_min, lat_max, ny)
+    lon_grid, lat_grid = np.meshgrid(lons, lats)
+    water = _land_mask_at(lons, lats)
+    return lons, lats, lon_grid, lat_grid, water
+
+
 def generate_geotiff(
     output_path: str,
     lon_min: float = 116.0,
@@ -1177,41 +1259,15 @@ def generate_geotiff(
     Creates hotspot-like patterns near known Philippine tidal straits,
     masks out major land areas, and adds perlin-like noise.
     """
-    import rasterio
-    from rasterio.transform import from_bounds
-
     rng = np.random.default_rng(seed)
 
-    # Grid dimensions
-    km_per_deg = 111.32
-    dx = resolution_km / km_per_deg
-    dy = resolution_km / km_per_deg
-
-    nx = int((lon_max - lon_min) / dx) + 1
-    ny = int((lat_max - lat_min) / dy) + 1
+    lons, lats, lon_grid, lat_grid, water = _grid_setup(
+        lon_min, lon_max, lat_min, lat_max, resolution_km
+    )
+    ny, nx = water.shape
 
     print(f"  Grid: {ny} rows x {nx} cols  ({resolution_km} km resolution)")
     print(f"  Domain: {lon_min}–{lon_max}°E, {lat_min}–{lat_max}°N")
-
-    # Coordinate arrays (cell centres)
-    lons = np.linspace(lon_min, lon_max, nx)
-    lats = np.linspace(lat_min, lat_max, ny)
-    lon_grid, lat_grid = np.meshgrid(lons, lats)
-
-    # --- Land mask ---
-    land_lat_edges = np.linspace(lat_max, lat_min, _LAND_TEMPLATE.shape[0] + 1)
-    land_lon_edges = np.linspace(lon_min, lon_max, _LAND_TEMPLATE.shape[1] + 1)
-
-    land_mask = np.zeros((ny, nx), dtype=np.float32)
-    for j in range(ny):
-        lat_idx = (
-            np.searchsorted(-land_lat_edges, -lat_grid[j, 0]) - 1
-        )  # descending lat
-        lat_idx = max(0, min(_LAND_TEMPLATE.shape[0] - 1, lat_idx))
-        for i in range(nx):
-            lon_idx = np.searchsorted(land_lon_edges, lon_grid[j, i]) - 1
-            lon_idx = max(0, min(_LAND_TEMPLATE.shape[1] - 1, lon_idx))
-            land_mask[j, i] = _LAND_TEMPLATE[lat_idx, lon_idx]
 
     # --- Synthetic power density ---
     power = np.zeros((ny, nx), dtype=np.float32)
@@ -1241,40 +1297,139 @@ def generate_geotiff(
     power = gaussian_filter(power, sigma=1.0)
 
     # Apply land mask — set land cells to nodata
-    power[land_mask < 0.5] = -9999.0
-    nodata = -9999.0
+    power[water < 0.5] = -9999.0
 
-    # --- Write GeoTIFF ---
-    transform = from_bounds(lon_min, lat_min, lon_max, lat_max, nx, ny)
-
-    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-
-    with rasterio.open(
+    _write_cog(
         output_path,
-        "w",
-        driver="COG",
-        height=ny,
-        width=nx,
-        count=1,
-        dtype="float32",
-        crs="EPSG:4326",
-        transform=transform,
-        nodata=nodata,
-        TILING_SCHEME="GoogleMapsCompatible",
-        COMPRESS="LZW",
-    ) as dst:
-        dst.write(power.astype(np.float32), 1)
-        dst.set_band_description(1, "mean tidal-current power density (W/m2)")
+        power,
+        lon_min,
+        lat_min,
+        lon_max,
+        lat_max,
+        "mean tidal-current power density (W/m2)",
+        nodata=-9999.0,
+    )
 
     size_mb = os.path.getsize(output_path) / 1e6
     print(f"  ✓ written {output_path}  ({size_mb:.1f} MB)")
 
     # Print stats
-    valid = power[land_mask > 0.5]
+    valid = power[water > 0.5]
     print(
         f"  Stats (water cells): min={valid.min():.0f}  max={valid.max():.0f}  "
         f"mean={valid.mean():.0f}  p95={np.percentile(valid, 95):.0f} W/m²"
     )
+
+
+def generate_speed_geotiff(
+    output_path: str,
+    power_path: str,
+    lon_min: float = 116.0,
+    lon_max: float = 130.0,
+    lat_min: float = 4.0,
+    lat_max: float = 22.0,
+    resolution_km: float = 2.0,
+) -> None:
+    """Derive a max-current-speed layer from the power GeoTIFF: U=(2P/ρ)^⅓."""
+    import rasterio
+
+    with rasterio.open(power_path) as src:
+        power = src.read(1).astype(np.float64)
+        nodata = src.nodata
+
+    rho = 1025.0
+    speed = np.where(power > 0, (2.0 * power / rho) ** (1.0 / 3.0), 0.0)
+    if nodata is not None:
+        speed[np.isclose(power, nodata)] = nodata
+
+    _write_cog(
+        output_path,
+        speed.astype(np.float32),
+        lon_min,
+        lat_min,
+        lon_max,
+        lat_max,
+        "maximum depth-averaged current speed (m/s)",
+        nodata=nodata,
+    )
+    print(f"  ✓ written {output_path}")
+
+
+def generate_bathymetry_geotiff(
+    output_path: str,
+    lon_min: float = 116.0,
+    lon_max: float = 130.0,
+    lat_min: float = 4.0,
+    lat_max: float = 22.0,
+    resolution_km: float = 2.0,
+    seed: int = 42,
+) -> None:
+    """Synthetic bathymetry: shallow near coast, deepening offshore."""
+    rng = np.random.default_rng(seed + 1)
+    lons, lats, lon_grid, lat_grid, water = _grid_setup(
+        lon_min, lon_max, lat_min, lat_max, resolution_km
+    )
+    ny, nx = water.shape
+
+    from scipy.ndimage import distance_transform_edt, gaussian_filter
+
+    # scipy EDT: foreground (water) pixels report distance to nearest
+    # background (land) pixel.
+    dist_km = distance_transform_edt(water, sampling=(resolution_km, resolution_km))
+
+    # Base depth grows with distance from land; straits (hotspots) are shallower.
+    depth = 25.0 + 6.0 * dist_km
+    for _name, lat, lon, _peak, sigma in _HOTSPOTS:
+        blob = _gaussian(lon_grid, lat_grid, lon, lat, sigma * 2.0, sigma * 2.0)
+        depth -= blob * 60.0  # shallower near straits
+    depth += rng.uniform(-8, 8, (ny, nx))
+    depth = gaussian_filter(depth, sigma=1.0)
+    depth = np.clip(depth, 5.0, 4000.0)
+    depth[water < 0.5] = -9999.0
+
+    _write_cog(
+        output_path,
+        depth.astype(np.float32),
+        lon_min,
+        lat_min,
+        lon_max,
+        lat_max,
+        "bathymetric depth (m, positive down)",
+        nodata=-9999.0,
+    )
+    print(f"  ✓ written {output_path}")
+
+
+def generate_distance_geotiff(
+    output_path: str,
+    lon_min: float = 116.0,
+    lon_max: float = 130.0,
+    lat_min: float = 4.0,
+    lat_max: float = 22.0,
+    resolution_km: float = 2.0,
+) -> None:
+    """Distance from every cell to the nearest coast [km]."""
+    from scipy.ndimage import distance_transform_edt
+
+    lons, lats, _lon_grid, _lat_grid, water = _grid_setup(
+        lon_min, lon_max, lat_min, lat_max, resolution_km
+    )
+    # scipy EDT: foreground (water) pixels report distance to nearest
+    # background (land) pixel.
+    dist_km = distance_transform_edt(water, sampling=(resolution_km, resolution_km))
+    dist_km[water < 0.5] = -9999.0
+
+    _write_cog(
+        output_path,
+        dist_km.astype(np.float32),
+        lon_min,
+        lat_min,
+        lon_max,
+        lat_max,
+        "distance to nearest coast (km)",
+        nodata=-9999.0,
+    )
+    print(f"  ✓ written {output_path}")
 
 
 def generate_hotspots_geojson(
@@ -1366,19 +1521,42 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
 
     geotiff_path = str(output_dir / "tidal_power_density.tif")
+    speed_path = str(output_dir / "max_current_speed.tif")
+    bathy_path = str(output_dir / "bathymetry.tif")
+    dist_path = str(output_dir / "distance_to_coast.tif")
     geojson_path = str(output_dir / "hotspots.geojson")
 
     print("\n  Tidal Web Service — Test Data Generator\n")
     print(f"  Output directory: {output_dir.resolve()}\n")
 
-    print("  [1/2] Generating GeoTIFF …")
+    print("  [1/5] Generating power-density GeoTIFF …")
     generate_geotiff(
         geotiff_path,
         resolution_km=args.resolution_km,
         seed=args.seed,
     )
 
-    print("\n  [2/2] Extracting hotspots …")
+    print("  [2/5] Deriving max-current-speed GeoTIFF …")
+    generate_speed_geotiff(
+        speed_path,
+        geotiff_path,
+        resolution_km=args.resolution_km,
+    )
+
+    print("  [3/5] Generating bathymetry GeoTIFF …")
+    generate_bathymetry_geotiff(
+        bathy_path,
+        resolution_km=args.resolution_km,
+        seed=args.seed,
+    )
+
+    print("  [4/5] Generating distance-to-coast GeoTIFF …")
+    generate_distance_geotiff(
+        dist_path,
+        resolution_km=args.resolution_km,
+    )
+
+    print("\n  [5/5] Extracting hotspots …")
     generate_hotspots_geojson(
         geotiff_path,
         geojson_path,

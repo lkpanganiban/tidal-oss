@@ -29,16 +29,18 @@ from .forcing import (
     make_synthetic_tidal_boundary,
     read_tidal_constituents,
 )
-from .grid import StructuredGrid
+from .grid import StructuredGrid, distance_to_coast_km
 from .output import (
     NetCDFStreamWriter,
+    max_speed_from_netcdf,
     mean_power_from_netcdf,
     read_last_state,
     write_hotspots_geojson,
     write_mean_power_geotiff,
+    write_raster_geotiff,
 )
 from .solver import ShallowWaterSolver
-from .utils import cfl_timestep, coriolis
+from .utils import cfl_timestep, coriolis, speed
 
 logger = logging.getLogger("tidal_model")
 
@@ -271,6 +273,7 @@ def run(config: dict, resume_from: str | None = None) -> str:
     next_save = np.ceil(start_time / save_interval) * save_interval
 
     power_sum = np.zeros(grid.shape, dtype=np.float64)
+    speed_max = np.zeros(grid.shape, dtype=np.float64)
     power_count = 0
 
     writer_mode = "a" if resume_from else "w"
@@ -293,9 +296,10 @@ def run(config: dict, resume_from: str | None = None) -> str:
     ) as writer:
 
         def snapshot_callback(solv, step_n):
-            nonlocal next_save, power_sum, power_count
+            nonlocal next_save, power_sum, speed_max, power_count
             if solv.time >= next_save:
                 spd = solv.compute_power_density()
+                sp = speed(solv.u, solv.v)
                 writer.write_snapshot(
                     solv.time,
                     solv.eta.copy(),
@@ -304,6 +308,7 @@ def run(config: dict, resume_from: str | None = None) -> str:
                     spd,
                 )
                 power_sum += spd
+                np.maximum(speed_max, sp, out=speed_max)
                 power_count += 1
                 next_save += save_interval
             return None
@@ -330,19 +335,52 @@ def run(config: dict, resume_from: str | None = None) -> str:
 
     # ---- 8. Post-process & output ----
     if resume_from and os.path.isfile(nc_path):
-        # Resumed run: recompute the mean over the FULL time series
+        # Resumed run: recompute the mean / max over the FULL time series
         # (fresh segment + resumed segment).
         power_mean = mean_power_from_netcdf(nc_path)
+        speed_max = max_speed_from_netcdf(nc_path)
         logger.info("Recomputed time-mean power from %s", nc_path)
     elif power_count > 0:
         power_mean = power_sum / power_count
         logger.info("Wrote NetCDF: %s (%d snapshots)", nc_path, power_count)
     else:
         power_mean = solver.compute_power_density()
+        speed_max = speed(solver.u, solver.v)
 
+    # Power density (land masked as NaN so the web layer renders it as
+    # transparent over the base map)
     tif_path = os.path.join(out_cfg["dir"], out_cfg["final_geotiff"])
-    write_mean_power_geotiff(grid, power_mean, tif_path)
+    power_layer = np.where(grid.mask, power_mean, np.nan)
+    write_mean_power_geotiff(grid, power_layer, tif_path)
     logger.info("Wrote GeoTIFF: %s", tif_path)
+
+    # Max current speed (m/s) — key for turbine cut-in/rated speed screening
+    speed_path = os.path.join(
+        out_cfg["dir"], out_cfg.get("max_speed_geotiff", "max_current_speed.tif")
+    )
+    speed_layer = np.where(grid.mask, speed_max, np.nan)
+    write_raster_geotiff(
+        grid, speed_layer, speed_path, "maximum depth-averaged current speed (m/s)"
+    )
+    logger.info("Wrote GeoTIFF: %s", speed_path)
+
+    # Bathymetry (m, positive down; land = NaN)
+    bathy_path = os.path.join(
+        out_cfg["dir"], out_cfg.get("bathymetry_geotiff", "bathymetry.tif")
+    )
+    depth_layer = np.where(grid.mask, grid.h, np.nan)
+    write_raster_geotiff(
+        grid, depth_layer, bathy_path, "bathymetric depth (m, positive down)"
+    )
+    logger.info("Wrote GeoTIFF: %s", bathy_path)
+
+    # Distance to nearest coast (km) — MSP: cabling, navigation, exclusion zones
+    dist_path = os.path.join(
+        out_cfg["dir"], out_cfg.get("distance_geotiff", "distance_to_coast.tif")
+    )
+    dist_km = distance_to_coast_km(grid.mask, grid.dx, grid.dy)
+    write_raster_geotiff(grid, dist_km, dist_path, "distance to nearest coast (km)")
+    logger.info("Wrote GeoTIFF: %s", dist_path)
 
     geojson_path = os.path.join(
         out_cfg["dir"], out_cfg.get("hotspots_geojson", "hotspots.geojson")

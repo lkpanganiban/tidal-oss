@@ -218,3 +218,24 @@ def test_run_then_resume():
         )
         times = ds["time"].values
         assert np.all(np.diff(times) > 0), "time not monotonic after resume"
+
+
+# ---------------------------------------------------------------------------
+# Distance-to-coast (scipy EDT semantics regression test)
+# ---------------------------------------------------------------------------
+
+
+def test_distance_to_coast_semantics():
+    """Water cells report distance to nearest land; land cells are 0."""
+    from model.grid import distance_to_coast_km
+
+    # 1-D equivalent: land strip at column 3, 2 km cells
+    mask = np.ones((1, 7), dtype=bool)
+    mask[0, 3] = False  # land
+    dist = distance_to_coast_km(mask, dx=2000.0, dy=2000.0)
+    expected = np.array([[6.0, 4.0, 2.0, 0.0, 2.0, 4.0, 6.0]])
+    assert np.allclose(dist, expected), f"got {dist}"
+
+    # All-water domain → zero distance everywhere
+    all_water = np.ones((5, 5), dtype=bool)
+    assert np.all(distance_to_coast_km(all_water, 2000.0, 2000.0) == 0.0)

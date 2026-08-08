@@ -3,761 +3,1363 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Tidal Current Energy — Philippines</title>
+<title>Tidal MSP — Philippine Tidal Current Energy Planner</title>
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"
         integrity="sha384-SYKAG6cglRMN0RVvhNeBY0r3FYKNOJtznwA0v7B5Vp9tr31xAHsZC0DqkQ/pZDmj"
         crossorigin="anonymous"></script>
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css"
       integrity="sha384-MinO0mNliZ3vwppuPOUnGa+iq619pfMhLVUXfC4LHwSCvF9H+6P/KO4Q7qBOYV5V"
       crossorigin="anonymous">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.js"
+        integrity="sha384-zYPBGXwO4633CABX/5Spf6emCKUJCfoOkhOMYyxMsatqQZPnDblmmOewfjsIVWCM"
+        crossorigin="anonymous"></script>
 <style>
 :root {
-  --bg: #1a1d23;
-  --bg-panel: #22262e;
-  --bg-hover: #2a2f38;
-  --border: #333842;
-  --text: #d0d4dc;
-  --text-muted: #8891a4;
-  --accent: #4fc3f7;
-  --accent-dim: #2b6f8f;
-  --red: #ef5350;
-  --green: #66bb6a;
-  --orange: #ffa726;
-  --radius: 8px;
-  --sidebar-w: 320px;
-  --transition: 0.2s ease;
+  --bg: #0b0e14;
+  --bg-elev: #12161e;
+  --panel: rgba(18, 22, 30, 0.85);
+  --panel-solid: #141a24;
+  --border: rgba(255, 255, 255, 0.09);
+  --border-strong: rgba(255, 255, 255, 0.16);
+  --text: #e8eef7;
+  --text-dim: #9aa7ba;
+  --text-faint: #6b7689;
+  --accent: #4fd1ff;
+  --accent-2: #7c9cff;
+  --good: #4ade80;
+  --warn: #fbbf24;
+  --bad: #f87171;
+  --radius: 12px;
+  --radius-sm: 8px;
+  --shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+  --dock-w: 316px;
+  --topbar-h: 52px;
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Inter', 'Helvetica Neue', Arial, sans-serif;
+  --mono: 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace;
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
+html, body { height: 100%; }
+
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  font-family: var(--font);
   background: var(--bg);
+  color: var(--text);
   overflow: hidden;
+  font-size: 14px;
 }
+
+/* ── Map ─────────────────────────────────────────────────── */
 
 #map {
   position: absolute;
-  top: 0; bottom: 0;
-  left: var(--sidebar-w); right: 0;
-  transition: left var(--transition);
+  inset: var(--topbar-h) 0 0 0;
 }
-#map.sidebar-collapsed { left: 0; }
 
-/* ── Sidebar ─────────────────────────────────────────────── */
+/* ── Top bar ─────────────────────────────────────────────── */
 
-#sidebar {
+#topbar {
   position: absolute;
-  top: 0; left: 0; bottom: 0;
-  width: var(--sidebar-w);
-  background: var(--bg-panel);
-  border-right: 1px solid var(--border);
-  display: flex; flex-direction: column;
-  z-index: 100;
-  transition: transform var(--transition);
+  top: 0; left: 0; right: 0;
+  height: var(--topbar-h);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 14px;
+  background: linear-gradient(180deg, rgba(14, 18, 26, 0.92), rgba(11, 14, 20, 0.72));
+  border-bottom: 1px solid var(--border);
+  backdrop-filter: blur(10px);
+  z-index: 200;
+}
+
+.brand { display: flex; align-items: center; gap: 10px; min-width: 220px; }
+.brand .logo {
+  width: 30px; height: 30px; border-radius: 8px;
+  background: linear-gradient(135deg, #0e7490, #22d3ee);
+  display: grid; place-items: center; font-size: 16px;
+  box-shadow: 0 0 18px rgba(34, 211, 238, 0.35);
+}
+.brand h1 { font-size: 14px; font-weight: 700; letter-spacing: 0.2px; }
+.brand small { display: block; font-size: 10.5px; color: var(--text-faint); font-weight: 500; }
+
+.spacer { flex: 1; }
+
+/* base map pills */
+.pills { display: flex; gap: 4px; background: rgba(0,0,0,0.25); padding: 3px; border-radius: 10px; border: 1px solid var(--border); }
+.pills button {
+  border: 0; background: transparent; color: var(--text-dim);
+  font: inherit; font-size: 12px; font-weight: 600;
+  padding: 5px 12px; border-radius: 7px; cursor: pointer; transition: all 0.15s;
+}
+.pills button:hover { color: var(--text); }
+.pills button.active { background: var(--accent); color: #06222e; }
+
+/* topbar buttons */
+.tbtn {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: rgba(255,255,255,0.05); border: 1px solid var(--border);
+  color: var(--text); font: inherit; font-size: 12.5px; font-weight: 600;
+  padding: 7px 12px; border-radius: 9px; cursor: pointer; transition: all 0.15s;
+  white-space: nowrap;
+}
+.tbtn:hover { background: rgba(255,255,255,0.1); border-color: var(--border-strong); }
+.tbtn.active { background: rgba(79, 209, 255, 0.15); border-color: var(--accent); color: var(--accent); }
+.tbtn svg { width: 15px; height: 15px; }
+
+/* export menu */
+.menu-wrap { position: relative; }
+.menu {
+  position: absolute; top: calc(100% + 8px); right: 0;
+  min-width: 240px; background: var(--panel-solid);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: var(--shadow); padding: 6px; display: none; z-index: 300;
+}
+.menu.open { display: block; }
+.menu .menu-title { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text-faint); padding: 8px 10px 4px; }
+.menu a, .menu button {
+  display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  width: 100%; text-align: left; background: none; border: 0; color: var(--text-dim);
+  font: inherit; font-size: 12.5px; padding: 8px 10px; border-radius: 7px; cursor: pointer;
+}
+.menu a:hover, .menu button:hover { background: rgba(255,255,255,0.06); color: var(--text); }
+.menu .hint { font-size: 11px; color: var(--text-faint); }
+
+/* ── Left dock ───────────────────────────────────────────── */
+
+#dock {
+  position: absolute;
+  top: calc(var(--topbar-h) + 12px);
+  left: 12px; bottom: 12px;
+  width: var(--dock-w);
+  display: flex; flex-direction: column; gap: 10px;
+  pointer-events: none;
+  overflow: hidden;   /* never let dock content spill over other panels */
+  z-index: 150;
+}
+#dock > * { pointer-events: auto; }
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(12px);
   overflow: hidden;
 }
-#sidebar.collapsed { transform: translateX(calc(-1 * var(--sidebar-w))); }
 
-#sidebar-toggle {
-  position: absolute;
-  top: 12px; left: var(--sidebar-w);
-  width: 28px; height: 28px;
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-left: none;
-  border-radius: 0 6px 6px 0;
-  color: var(--text);
-  cursor: pointer;
-  z-index: 110;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 14px;
-  transition: left var(--transition);
+/* Dock cards share vertical space; each shrinks and scrolls internally so
+   all panels stay visible when open.  Collapsed cards collapse to header. */
+#dock > .card {
+  flex: 1 1 0;         /* even split; never grow beyond the dock */
+  min-height: 0;
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
 }
-#sidebar.collapsed ~ #sidebar-toggle { left: 0; border-left: 1px solid var(--border); border-radius: 0 6px 6px 0; }
+#dock > .card .card-body { flex: 1 1 0; min-height: 0; overflow-y: auto; }
+#dock > .card.collapsed { flex: 0 0 auto; max-height: none; }
+/* Resource screening is the primary analysis panel — give it the largest
+   share of the dock (up to 55%); layers & hotspots share the remainder
+   and scroll internally.  Its body must keep flex-basis: auto so the
+   card's natural height follows the content (then the max-height cap
+   applies and the body scrolls). */
+#dock > .card.docked {
+  flex: 0 0 auto;
+  max-height: 55%;
+}
+#dock > .card.docked .card-body { flex: 1 1 auto; }
 
-/* ── Sidebar header / logo ──────────────────────────────── */
-
-.sidebar-header {
-  padding: 20px 20px 16px;
+/* Compact the resource-screening content so filters + totals fit the panel */
+#card-resource .card-body { padding: 10px 12px; }
+#card-resource .filter-row { margin-bottom: 8px; }
+#card-resource .filter-row label { margin-bottom: 2px; }
+#card-resource .resource-totals { gap: 6px; margin-top: 4px; }
+#card-resource .rt { padding: 6px 8px; }
+#card-resource .rt .rt-v { font-size: 13px; }
+#card-resource .rt .rt-l { font-size: 9.5px; }
+#card-resource .filter-note { margin-top: 6px; }
+.card-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px; cursor: pointer; user-select: none;
   border-bottom: 1px solid var(--border);
 }
-.logo {
+.card-head h3 { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.7px; color: var(--text-dim); display: flex; align-items: center; gap: 8px; }
+.card-head h3 svg { width: 14px; height: 14px; color: var(--accent); }
+.card-head .chev { color: var(--text-faint); font-size: 10px; transition: transform 0.2s; }
+.card.collapsed .card-head .chev { transform: rotate(-90deg); }
+.card.collapsed .card-body { display: none; }
+.card-body { padding: 12px 14px; overflow-y: auto; }
+
+/* layers */
+.layer-row {
   display: flex; align-items: center; gap: 10px;
+  padding: 7px 8px; border-radius: 9px; cursor: pointer;
+  transition: background 0.15s;
 }
-.logo-icon {
-  width: 40px; height: 40px;
-  background: linear-gradient(135deg, #1a5276, #2e86c1);
-  border-radius: 10px;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 20px;
-  flex-shrink: 0;
-}
-.logo-text h2 {
-  font-size: 14px; font-weight: 700; color: #fff; line-height: 1.2;
-}
-.logo-text span {
-  font-size: 11px; color: var(--text-muted);
-}
+.layer-row:hover { background: rgba(255,255,255,0.05); }
+.layer-row .swatch { width: 14px; height: 14px; border-radius: 4px; flex: 0 0 auto; border: 1px solid rgba(255,255,255,0.2); }
+.layer-row .lname { flex: 1; font-size: 13px; font-weight: 500; }
+.layer-row .lunits { font-size: 11px; color: var(--text-faint); }
+.layer-row input[type=checkbox] { accent-color: var(--accent); width: 15px; height: 15px; cursor: pointer; }
+.layer-opacity { display: flex; align-items: center; gap: 8px; padding: 0 8px 8px 32px; }
+.layer-opacity input[type=range] { flex: 1; accent-color: var(--accent); height: 3px; }
+.layer-opacity span { font-size: 11px; color: var(--text-faint); min-width: 34px; text-align: right; }
 
-/* ── Sidebar sections ───────────────────────────────────── */
-
-.sidebar-body { flex: 1; overflow-y: auto; padding: 0 16px 16px; }
-.sidebar-body::-webkit-scrollbar { width: 4px; }
-.sidebar-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
-
-.section {
-  margin-top: 16px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  overflow: hidden;
-}
-.section-header {
-  padding: 10px 14px;
-  background: var(--bg-hover);
-  font-size: 12px; font-weight: 600;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  cursor: pointer;
-  display: flex; justify-content: space-between; align-items: center;
-  user-select: none;
-}
-.section-header:hover { color: var(--text); }
-.section-header .arrow { transition: transform var(--transition); font-size: 10px; }
-.section.collapsed .section-body { display: none; }
-.section.collapsed .section-header .arrow { transform: rotate(-90deg); }
-
-.section-body { padding: 12px 14px; font-size: 13px; color: var(--text-muted); line-height: 1.5; }
-.section-body p { margin-bottom: 6px; }
-.section-body a { color: var(--accent); text-decoration: none; }
-.section-body a:hover { text-decoration: underline; }
-
-/* ── Query result table ─────────────────────────────────── */
-
-.query-table { width: 100%; border-collapse: collapse; }
-.query-table td { padding: 4px 0; font-size: 13px; }
-.query-table td:first-child { color: var(--text-muted); }
-.query-table td:last-child { text-align: right; font-weight: 600; color: var(--text); }
-.query-table .val-power { color: var(--accent); }
-.query-coords { font-size: 11px; color: var(--text-muted); margin-top: 6px; }
-.query-empty { font-size: 12px; color: var(--text-muted); font-style: italic; }
-
-/* ── Layer opacity slider ───────────────────────────────── */
-
-.opacity-row {
+/* hotspots list */
+.hotspot-item {
   display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px; border-radius: 9px; cursor: pointer;
+  border: 1px solid transparent; transition: all 0.15s;
 }
-.opacity-row label { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
-.opacity-row input[type=range] { flex: 1; accent-color: var(--accent); }
-.opacity-row span { font-size: 12px; color: var(--text); min-width: 32px; text-align: right; }
-
-/* ── Stats badges ───────────────────────────────────────── */
-
-.stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.stat-badge {
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 8px 10px;
-  text-align: center;
+.hotspot-item:hover { background: rgba(79, 209, 255, 0.08); border-color: rgba(79,209,255,0.25); }
+.hotspot-rank {
+  width: 22px; height: 22px; border-radius: 6px; flex: 0 0 auto;
+  display: grid; place-items: center; font-size: 11px; font-weight: 800;
+  background: rgba(79, 209, 255, 0.15); color: var(--accent);
 }
-.stat-badge .val { font-size: 16px; font-weight: 700; color: var(--accent); }
-.stat-badge .lbl { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+.hotspot-meta { flex: 1; min-width: 0; }
+.hotspot-meta .hs-name { font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hotspot-meta .hs-sub { font-size: 11px; color: var(--text-faint); }
+.hotspot-val { text-align: right; }
+.hotspot-val .hs-pw { font-size: 13px; font-weight: 800; color: var(--warn); font-family: var(--mono); }
+.hotspot-val .hs-depth { font-size: 10.5px; color: var(--text-faint); }
+.hs-empty { font-size: 12px; color: var(--text-faint); padding: 8px; font-style: italic; }
 
-/* ── Right toolbar ──────────────────────────────────────── */
+/* resource filters */
+.filter-row { margin-bottom: 12px; }
+.filter-row label { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-dim); margin-bottom: 5px; }
+.filter-row label b { color: var(--text); font-family: var(--mono); font-weight: 600; }
+.filter-row input[type=range] { width: 100%; accent-color: var(--accent); }
+.filter-note { font-size: 11px; color: var(--text-faint); margin-top: 8px; line-height: 1.5; }
 
-#toolbar {
+.resource-totals { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 6px; }
+.rt {
+  background: rgba(255,255,255,0.04); border: 1px solid var(--border);
+  border-radius: 9px; padding: 8px 10px;
+}
+.rt .rt-v { font-size: 15px; font-weight: 800; font-family: var(--mono); color: var(--accent); }
+.rt .rt-l { font-size: 10px; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px; }
+.rt.wide { grid-column: span 2; }
+
+/* ── Right info cards ────────────────────────────────────── */
+
+#infostack {
   position: absolute;
-  top: 12px; right: 12px;
-  display: flex; flex-direction: column; gap: 6px;
-  z-index: 50;
+  top: calc(var(--topbar-h) + 12px);
+  right: 12px;
+  bottom: 12px;
+  width: 340px;
+  display: flex; flex-direction: column; gap: 10px;
+  z-index: 150;
+  pointer-events: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
-.tool-btn {
-  width: 40px; height: 40px;
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  color: var(--text-muted);
-  cursor: pointer;
-  font-size: 16px;
-  display: flex; align-items: center; justify-content: center;
-  transition: all var(--transition);
-}
-.tool-btn:hover { color: var(--text); border-color: var(--text-muted); background: var(--bg-hover); }
-.tool-btn.active { color: #fff; border-color: var(--accent); background: var(--accent-dim); }
-.tool-btn.danger:hover { color: var(--red); border-color: var(--red); }
+/* Only capture pointer events when a card is actually shown (so the empty
+   strip never blocks map clicks); then the stack itself scrolls. */
+#infostack:has(.info-card.visible) { pointer-events: auto; }
+#infostack::-webkit-scrollbar { width: 4px; }
+#infostack::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.18); border-radius: 2px; }
+#infostack > * { pointer-events: auto; }
 
-.tool-label {
-  position: absolute;
-  right: 48px; top: 50%;
-  transform: translateY(-50%);
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 4px 8px;
-  font-size: 11px; color: var(--text);
-  white-space: nowrap; pointer-events: none;
-  opacity: 0; transition: opacity var(--transition);
-}
-.tool-btn:hover .tool-label { opacity: 1; }
-
-/* ── Measurement display ────────────────────────────────── */
-
-#measure-display {
-  position: absolute;
-  bottom: 80px; right: 12px;
-  background: var(--bg-panel);
-  border: 1px solid var(--accent-dim);
-  border-radius: var(--radius);
-  padding: 10px 14px;
-  font-size: 13px; color: var(--text);
-  z-index: 50;
+.info-card {
   display: none;
-  min-width: 180px;
+  flex-direction: column;
+  min-height: 0;
+  max-height: calc(100vh - var(--topbar-h) - 24px);
 }
-#measure-display .m-value { font-size: 18px; font-weight: 700; color: var(--accent); }
-#measure-display .m-label { font-size: 11px; color: var(--text-muted); }
+.info-card.visible { display: flex; }
+.info-card .card-body { overflow-y: auto; min-height: 0; }
+.info-card .close {
+  background: none; border: 0; color: var(--text-faint); cursor: pointer;
+  font-size: 15px; line-height: 1; padding: 2px 4px; border-radius: 6px;
+}
+.info-card .close:hover { color: var(--text); background: rgba(255,255,255,0.08); }
 
-/* ── Legend ─────────────────────────────────────────────── */
+.stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.stat {
+  background: rgba(255,255,255,0.04); border: 1px solid var(--border);
+  border-radius: 9px; padding: 8px 10px;
+}
+.stat .s-v { font-size: 15px; font-weight: 800; font-family: var(--mono); color: var(--accent); }
+.stat .s-l { font-size: 10px; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px; }
+.stat.wide { grid-column: span 2; }
+.stat .s-sub { font-size: 10.5px; color: var(--text-faint); }
+
+.coord-line { font-size: 11px; color: var(--text-faint); font-family: var(--mono); margin-bottom: 8px; }
+.section-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.7px; color: var(--text-faint); margin: 10px 0 6px; }
+
+#chart-wrap { position: relative; height: 200px; margin-top: 4px; }
+#turbine-chart-wrap, #pcurve-wrap { position: relative; height: 150px; margin-top: 4px; }
+
+.turbine-select {
+  width: 100%; margin: 6px 0 10px;
+  background: var(--panel-solid); color: var(--text);
+  border: 1px solid var(--border); border-radius: 9px;
+  padding: 8px 10px; font: inherit; font-size: 12.5px; cursor: pointer;
+}
+.turbine-select:focus { outline: none; border-color: var(--accent); }
+.turbine-select option { background: var(--panel-solid); color: var(--text); }
+
+/* area analysis */
+#area-hint { font-size: 12px; color: var(--text-dim); line-height: 1.5; }
+.btn-row { display: flex; gap: 8px; margin-top: 10px; }
+.btn {
+  flex: 1; border: 1px solid var(--border); background: rgba(255,255,255,0.05);
+  color: var(--text); font: inherit; font-size: 12.5px; font-weight: 600;
+  padding: 8px; border-radius: 9px; cursor: pointer; transition: all 0.15s;
+}
+.btn:hover { background: rgba(255,255,255,0.1); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #06222e; }
+.btn.primary:hover { filter: brightness(1.1); }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ── Legend ──────────────────────────────────────────────── */
 
 #legend {
   position: absolute;
-  bottom: 24px; left: calc(var(--sidebar-w) + 12px);
-  background: rgba(34, 38, 46, 0.92);
+  left: calc(var(--dock-w) + 24px);
+  bottom: 20px;
+  background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 10px 14px;
-  font-size: 11px; color: var(--text-muted);
-  z-index: 50;
-  backdrop-filter: blur(8px);
-  transition: left var(--transition);
+  backdrop-filter: blur(10px);
+  box-shadow: var(--shadow);
+  z-index: 140;
+  font-size: 11px;
+  min-width: 210px;
 }
-#map.sidebar-collapsed ~ #legend { left: 12px; }
+#legend .lg-title { color: var(--accent); font-weight: 700; margin-bottom: 6px; font-size: 11.5px; }
+#legend .lg-bar { height: 8px; border-radius: 4px; margin-bottom: 5px; }
+#legend .lg-labels { display: flex; justify-content: space-between; color: var(--text-faint); font-family: var(--mono); font-size: 10px; }
+#legend .lg-units { color: var(--text-faint); margin-top: 3px; }
 
-#legend .bar {
-  width: 220px; height: 10px; border-radius: 5px; margin: 4px 0;
-  background: linear-gradient(to right,
-    rgba(0,3,80,0.6) 0%, rgba(0,50,200,0.8) 10%,
-    rgba(0,180,200,0.8) 30%, rgba(0,230,130,0.8) 50%,
-    rgba(230,200,0,0.8) 70%, rgba(255,100,0,0.8) 90%,
-    rgba(255,0,0,0.8) 100%);
+/* ── Draw mode banner ────────────────────────────────────── */
+
+#drawbanner {
+  position: absolute;
+  top: calc(var(--topbar-h) + 14px);
+  left: 50%; transform: translateX(-50%);
+  background: var(--panel-solid);
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  padding: 8px 18px;
+  font-size: 12.5px;
+  display: none;
+  align-items: center; gap: 12px;
+  z-index: 300;
+  box-shadow: var(--shadow);
 }
-#legend .labels { display: flex; justify-content: space-between; width: 220px; }
-#legend .legend-title { color: var(--accent); font-weight: 600; margin-bottom: 2px; }
+#drawbanner.visible { display: flex; }
+#drawbanner .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); animation: pulse 1.2s infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
 
-/* ── MapLibre overrides ─────────────────────────────────── */
+/* ── Toast ───────────────────────────────────────────────── */
 
-.maplibregl-ctrl-top-left  { left: var(--sidebar-w); transition: left var(--transition); }
-#map.sidebar-collapsed ~ .maplibregl-ctrl-top-left { left: 0; }
+#toast {
+  position: absolute;
+  bottom: 20px; right: 20px;
+  background: var(--panel-solid);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  padding: 10px 16px;
+  font-size: 12.5px;
+  box-shadow: var(--shadow);
+  opacity: 0; transform: translateY(8px);
+  transition: all 0.25s;
+  z-index: 400;
+  pointer-events: none;
+}
+#toast.show { opacity: 1; transform: translateY(0); }
+#toast.err { border-color: var(--bad); }
 
-/* ── Responsive ─────────────────────────────────────────── */
+/* ── MapLibre overrides ──────────────────────────────────── */
 
-@media (max-width: 600px) {
-  :root { --sidebar-w: 100vw; }
-  #sidebar:not(.collapsed) ~ #map { left: 0; visibility: hidden; }
+.maplibregl-ctrl-group { background: var(--panel-solid) !important; border: 1px solid var(--border) !important; box-shadow: none !important; }
+.maplibregl-ctrl-group button { background-color: transparent !important; }
+.maplibregl-ctrl-group button:hover { background-color: rgba(255,255,255,0.08) !important; }
+.maplibregl-ctrl-attrib { background: rgba(11,14,20,0.6) !important; font-size: 10px; }
+
+/* ── Scrollbars ──────────────────────────────────────────── */
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 3px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* ── Responsive ──────────────────────────────────────────── */
+
+@media (max-width: 720px) {
+  :root { --dock-w: 264px; }
+  #infostack { width: calc(100vw - 24px); }
+  .brand small { display: none; }
+  .brand { min-width: auto; }
+  #topbar { gap: 6px; }
 }
 </style>
 </head>
 <body>
 
-<!-- ── Sidebar ────────────────────────────────────────────── -->
+<!-- ── Top bar ───────────────────────────────────────────── -->
 
-<aside id="sidebar">
-  <div class="sidebar-header">
-    <div class="logo">
-      <div class="logo-icon">🌊</div>
-      <div class="logo-text">
-        <h2>Philippine Tidal Energy</h2>
-        <span>Open-Source Assessment</span>
+<header id="topbar">
+  <div class="brand">
+    <div class="logo">🌊</div>
+    <div>
+      <h1>Tidal MSP</h1>
+      <small>Philippine Tidal Current Energy Planner</small>
+    </div>
+  </div>
+
+  <div class="pills" id="basemap-pills">
+    <button data-base="osm" class="active">Map</button>
+    <button data-base="satellite">Satellite</button>
+    <button data-base="dark">Dark</button>
+  </div>
+
+  <div class="spacer"></div>
+
+  <button class="tbtn" id="btn-draw" title="Draw a polygon to assess a candidate site">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
+    Assess area
+  </button>
+  <button class="tbtn" id="btn-measure" title="Measure distance">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 17l6-6 4 4 6-6"/><path d="M15 9h5v5"/></svg>
+    Measure
+  </button>
+  <div class="menu-wrap">
+    <button class="tbtn" id="btn-export">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Export
+    </button>
+    <div class="menu" id="export-menu">
+      <div class="menu-title">GeoTIFF layers</div>
+      <a href="/api/download/tidal_power_density.tif" download>Power density <span class="hint">W/m²</span></a>
+      <a href="/api/download/max_current_speed.tif" download>Max current speed <span class="hint">m/s</span></a>
+      <a href="/api/download/bathymetry.tif" download>Bathymetry <span class="hint">m</span></a>
+      <a href="/api/download/distance_to_coast.tif" download>Distance to coast <span class="hint">km</span></a>
+      <div class="menu-title">Reports</div>
+      <button id="export-hotspots">Hotspot sites <span class="hint">CSV</span></button>
+      <button id="export-area" disabled>Site assessment <span class="hint">CSV</span></button>
+    </div>
+  </div>
+</header>
+
+<!-- ── Left dock ─────────────────────────────────────────── -->
+
+<div id="dock">
+
+  <div class="card" id="card-layers">
+    <div class="card-head" onclick="toggleCard('card-layers')">
+      <h3>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+        Data layers
+      </h3>
+      <span class="chev">▼</span>
+    </div>
+    <div class="card-body" id="layer-list">
+      <div class="hs-empty">Loading layers…</div>
+    </div>
+  </div>
+
+  <div class="card" id="card-hotspots">
+    <div class="card-head" onclick="toggleCard('card-hotspots')">
+      <h3>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 2v4M16 2v4M3 6h18v14H3z"/><path d="M3 10h18"/><path d="M12 14l1.5 3 3 1.5-3 1.5-1.5 3-1.5-3-3-1.5 3-1.5 1.5-3z"/></svg>
+        Hotspot sites
+      </h3>
+      <span class="chev">▼</span>
+    </div>
+    <div class="card-body" id="hotspot-list">
+      <div class="hs-empty">Loading hotspots…</div>
+    </div>
+  </div>
+
+  <div class="card docked" id="card-resource">
+    <div class="card-head" onclick="toggleCard('card-resource')">
+      <h3>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        Resource screening
+      </h3>
+      <span class="chev">▼</span>
+    </div>
+    <div class="card-body">
+      <div class="filter-row">
+        <label>Min power density <b id="f-minpower-v">200 W/m²</b></label>
+        <input type="range" id="f-minpower" min="0" max="2000" step="50" value="200">
+      </div>
+      <div class="filter-row">
+        <label>Depth range <b id="f-depth-v">0–200 m</b></label>
+        <input type="range" id="f-depth-min" min="0" max="300" step="5" value="0">
+        <input type="range" id="f-depth-max" min="0" max="300" step="5" value="200">
+      </div>
+      <div class="filter-row">
+        <label>Array efficiency <b id="f-eff-v">40%</b></label>
+        <input type="range" id="f-eff" min="10" max="80" step="5" value="40">
+      </div>
+      <div class="resource-totals" id="resource-totals">
+        <div class="rt wide"><div class="rt-v" id="rt-area">—</div><div class="rt-l">Suitable area (km²)</div></div>
+        <div class="rt"><div class="rt-v" id="rt-mw">—</div><div class="rt-l">Extractable (MW)</div></div>
+        <div class="rt"><div class="rt-v" id="rt-aep">—</div><div class="rt-l">AEP (GWh/yr)</div></div>
+        <div class="rt"><div class="rt-v" id="rt-mean">—</div><div class="rt-l">Mean P (W/m²)</div></div>
+        <div class="rt"><div class="rt-v" id="rt-cells">—</div><div class="rt-l">Cells</div></div>
+      </div>
+      <div class="filter-note" id="resource-note">Screening totals over cells meeting the filters (efficiency applies to extractable power).</div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ── Right info stack ──────────────────────────────────── -->
+
+<div id="infostack">
+
+  <div class="card info-card" id="card-query">
+    <div class="card-head" style="border-bottom:0">
+      <h3>Site inspector</h3>
+      <button class="close" onclick="hideCard('card-query')">✕</button>
+    </div>
+    <div class="card-body">
+      <div class="coord-line" id="q-coords">—</div>
+      <div class="stat-grid" id="q-stats"></div>
+      <div class="section-label">Tidal curve (simulation window)</div>
+      <div id="chart-wrap"><canvas id="ts-chart"></canvas></div>
+      <div class="section-label">Turbine performance</div>
+      <select id="turbine-select" class="turbine-select"></select>
+      <div id="turbine-stats" class="stat-grid"></div>
+      <div class="section-label" id="turbine-chart-label">Turbine output</div>
+      <div id="turbine-chart-wrap"><canvas id="turbine-chart"></canvas></div>
+      <div class="section-label" id="pcurve-label">Power curve</div>
+      <div id="pcurve-wrap"><canvas id="pcurve-chart"></canvas></div>
+      <div class="btn-row">
+        <button class="btn primary" id="q-assess" onclick="startAreaAtQuery()">Assess this site</button>
       </div>
     </div>
   </div>
 
-  <div class="sidebar-body">
-
-    <div class="section" id="sec-about">
-      <div class="section-header" onclick="toggleSection('sec-about')">
-        About <span class="arrow">▾</span>
-      </div>
-      <div class="section-body">
-        <p>Time-averaged tidal-current power density for the Philippine archipelago, computed with a 2D shallow-water hydrodynamic model.</p>
-        <p>Click anywhere on the map to query the power density at that location.</p>
-        <p style="margin-top:8px"><a href="/api/download/tidal_power_density.tif">Download GeoTIFF →</a></p>
-      </div>
+  <div class="card info-card" id="card-area">
+    <div class="card-head" style="border-bottom:0">
+      <h3>Site assessment</h3>
+      <button class="close" onclick="hideCard('card-area')">✕</button>
     </div>
-
-    <div class="section" id="sec-query">
-      <div class="section-header" onclick="toggleSection('sec-query')">
-        Query Result <span class="arrow">▾</span>
+    <div class="card-body">
+      <div id="area-hint">Click on the map to draw a polygon around a candidate site, then press <b>Finish</b>.</div>
+      <div class="btn-row">
+        <button class="btn" id="area-cancel" onclick="stopAreaDraw()">Cancel</button>
+        <button class="btn primary" id="area-finish" onclick="finishAreaDraw()" disabled>Finish</button>
       </div>
-      <div class="section-body">
-        <table class="query-table">
-          <tr><td>Power density</td><td id="val-power" class="val-power">—</td></tr>
-          <tr><td>Coordinates</td><td id="val-coords">—</td></tr>
-        </table>
-        <div class="query-coords" id="query-msg">Click the map to query</div>
-      </div>
+      <div id="area-results"></div>
     </div>
-
-    <div class="section" id="sec-stats">
-      <div class="section-header" onclick="toggleSection('sec-stats')">
-        Statistics <span class="arrow">▾</span>
-      </div>
-      <div class="section-body">
-        <div class="stats-grid">
-          <div class="stat-badge"><div class="val" id="stat-max">—</div><div class="lbl">Max W/m²</div></div>
-          <div class="stat-badge"><div class="val" id="stat-mean">—</div><div class="lbl">Mean W/m²</div></div>
-          <div class="stat-badge"><div class="val" id="stat-p95">—</div><div class="lbl">P95 W/m²</div></div>
-          <div class="stat-badge"><div class="val" id="stat-min">—</div><div class="lbl">Min W/m²</div></div>
-        </div>
-      </div>
-    </div>
-
-    <div class="section" id="sec-layers">
-      <div class="section-header" onclick="toggleSection('sec-layers')">
-        Layer Controls <span class="arrow">▾</span>
-      </div>
-      <div class="section-body">
-        <div class="opacity-row">
-          <label>Opacity</label>
-          <input type="range" id="opacity-slider" min="0" max="100" value="75" oninput="setOpacity(this.value)">
-          <span id="opacity-val">75%</span>
-        </div>
-      </div>
-    </div>
-
   </div>
-</aside>
 
-<button id="sidebar-toggle" onclick="toggleSidebar()" title="Toggle sidebar">◀</button>
-
-<!-- ── Toolbar ────────────────────────────────────────────── -->
-
-<div id="toolbar">
-  <button class="tool-btn" id="btn-distance" onclick="startMeasure('distance')" title="Measure distance">
-    📏<span class="tool-label">Measure distance</span>
-  </button>
-  <button class="tool-btn" id="btn-area" onclick="startMeasure('area')" title="Measure area">
-    ⬡<span class="tool-label">Measure area</span>
-  </button>
-  <button class="tool-btn danger" id="btn-clear" onclick="clearMeasure()" title="Clear measurements">
-    ✕<span class="tool-label">Clear</span>
-  </button>
 </div>
 
-<div id="measure-display">
-  <div class="m-label">Measurement</div>
-  <div class="m-value" id="measure-value">0 m</div>
+<!-- ── Draw banner / legend / toast ──────────────────────── -->
+
+<div id="drawbanner"><span class="dot"></span> Drawing assessment polygon — click to add points, <b>Finish</b> to compute</div>
+
+<div id="legend">
+  <div class="lg-title" id="lg-title">Mean power density</div>
+  <div class="lg-bar" id="lg-bar"></div>
+  <div class="lg-labels" id="lg-labels"></div>
+  <div class="lg-units" id="lg-units"></div>
 </div>
 
-<!-- ── Map ─────────────────────────────────────────────────── -->
+<div id="toast"></div>
 
 <div id="map"></div>
 
-<!-- ── Legend ──────────────────────────────────────────────── -->
-
-<div id="legend">
-  <div class="legend-title">Mean Power Density (W/m²)</div>
-  <div class="bar"></div>
-  <div class="labels">
-    <span>0</span><span>400</span><span>800</span><span>1200</span><span>1600+</span>
-  </div>
-</div>
-
-<!-- ── Script ──────────────────────────────────────────────── -->
-
 <script>
-// ── State ───────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════
+//  Tidal MSP — application logic
+// ═══════════════════════════════════════════════════════════
 
-let measureMode = null;         // 'distance' | 'area' | null
-let measurePoints = [];         // [{lng, lat}]
-let measureSourceId = 'measure-source';
-let measureLineId = 'measure-line';
-let measureFillId = 'measure-fill';
-let measurePointId = 'measure-points';
+const API = window.location.origin + '/api';
 
-// ── Sidebar ─────────────────────────────────────────────────
+const LAYER_ORDER = ['power', 'speed', 'depth', 'distance'];
 
-function toggleSidebar() {
-  const sidebar = document.getElementById('sidebar');
-  const mapEl = document.getElementById('map');
-  const toggle = document.getElementById('sidebar-toggle');
-  sidebar.classList.toggle('collapsed');
-  mapEl.classList.toggle('sidebar-collapsed');
-  toggle.innerHTML = sidebar.classList.contains('collapsed') ? '▶' : '◀';
-  setTimeout(() => map.resize(), 300);
+// swatch gradients for the layer manager (approximate server colormaps)
+const SWATCHES = {
+  power:  'linear-gradient(90deg,#004d99,#0088cc,#00e6a0,#f2c200,#ff5000)',
+  speed:  'linear-gradient(90deg,#45006b,#2a2a8f,#0f8f7a,#57b845,#fde725)',
+  depth:  'linear-gradient(90deg,#00c8ff,#5b8fe8,#4a52b8,#1f2a7a,#081040)',
+  distance:'linear-gradient(90deg,#0a0020,#4a0a66,#b8305c,#ffe02e)',
+};
+
+// legend CSS gradients (matching server cmaps)
+const LEGEND_GRADS = {
+  power:   'linear-gradient(90deg, rgba(0,3,80,0.6), rgba(0,50,200,0.8), rgba(0,180,200,0.8), rgba(0,230,130,0.8), rgba(230,200,0,0.8), rgba(255,100,0,0.8), rgba(255,0,0,0.8))',
+  speed:   'linear-gradient(90deg, #45006b, #2a2a8f, #0f8f7a, #57b845, #fde725)',
+  depth:   'linear-gradient(90deg, #00c8ff, #5b8fe8, #4a52b8, #1f2a7a, #081040)',
+  distance:'linear-gradient(90deg, #0a0020, #4a0a66, #b8305c, #ffe02e)',
+};
+
+const BASEMAPS = {
+  osm: {
+    type: 'raster',
+    tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+    tileSize: 256,
+    maxzoom: 19,
+    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+  },
+  satellite: {
+    type: 'raster',
+    tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
+    tileSize: 256,
+    maxzoom: 19,
+    attribution: '© Esri, Maxar, Earthstar Geographics',
+  },
+  dark: {
+    type: 'raster',
+    tiles: ['https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png'],
+    tileSize: 256,
+    maxzoom: 20,
+    attribution: '© CARTO © OpenStreetMap contributors',
+  },
+};
+
+const state = {
+  map: null,
+  layers: {},        // layer name → {visible, opacity, meta}
+  layerSources: {},  // layer name → source id
+  activeLayer: 'power',
+  baseMap: 'osm',
+  hotspots: [],
+  tsChart: null,
+  tsPoint: null,
+  drawMode: false,
+  drawPoints: [],
+  areaLast: null,
+  turbineSpecs: [],  // from /api/turbines
+  turbinePerf: null, // last /api/turbine_performance response
+  turbineChart: null,
+  pcurveChart: null,
+};
+
+// Resolves once the map style has finished loading (sources/layers may only
+// be added after that — MapLibre rejects earlier calls with
+// "Style is not done loading").
+let _mapLoadResolve = null;
+const mapLoadPromise = new Promise((resolve) => { _mapLoadResolve = resolve; });
+
+// ── helpers ────────────────────────────────────────────────
+
+const $ = (id) => document.getElementById(id);
+const fmt = (v, d = 1) => (v === null || v === undefined || isNaN(v)) ? '—' : Number(v).toFixed(d);
+const fmtBig = (v) => (v === null || v === undefined || isNaN(v)) ? '—'
+  : (v >= 1e6 ? (v / 1e6).toFixed(2) + 'M' : (v >= 1e4 ? (v / 1e3).toFixed(1) + 'k' : Math.round(v).toString()));
+
+function toast(msg, isErr = false) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.className = isErr ? 'show err' : 'show';
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => { t.className = ''; }, 3200);
 }
 
-function toggleSection(id) {
-  document.getElementById(id).classList.toggle('collapsed');
-}
+function toggleCard(id) { document.getElementById(id).classList.toggle('collapsed'); }
+function hideCard(id) { document.getElementById(id).classList.remove('visible'); }
+function showCard(id) { document.getElementById(id).classList.add('visible'); }
 
-// ── Opacity ─────────────────────────────────────────────────
-
-function setOpacity(val) {
-  const opacity = parseInt(val) / 100;
-  document.getElementById('opacity-val').textContent = val + '%';
-  if (window._tidalLayerReady && window._map) {
-    window._map.setPaintProperty('tidal-layer', 'raster-opacity', opacity);
-  }
-}
-
-// ── Geodesic calculations (Haversine) ──────────────────────
-
-function toRad(d) { return d * Math.PI / 180; }
-
-function haversineDistance(a, b) {
-  const R = 6371000;
-  const dLat = toRad(b.lat - a.lat);
-  const dLon = toRad(b.lng - a.lng);
-  const sinDLat = Math.sin(dLat / 2);
-  const sinDLon = Math.sin(dLon / 2);
-  const h = sinDLat * sinDLat + Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * sinDLon * sinDLon;
+function haversine(a, b) {
+  const R = 6371000, toRad = (d) => d * Math.PI / 180;
+  const dLat = toRad(b.lat - a.lat), dLon = toRad(b.lng - a.lng);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLon / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
 }
-
-function polygonArea(points) {
-  // Spherical polygon area (Shoelace on sphere approximation)
-  if (points.length < 3) return 0;
-  const R = 6371000;
+function polyAreaM2(pts) {
+  if (pts.length < 3) return 0;
+  const R = 6371000, toRad = (d) => d * Math.PI / 180;
   let area = 0;
-  const n = points.length;
-  for (let i = 0; i < n; i++) {
-    const j = (i + 1) % n;
-    const xi = toRad(points[i].lng) * Math.cos(toRad(points[i].lat));
-    const yi = toRad(points[i].lat);
-    const xj = toRad(points[j].lng) * Math.cos(toRad(points[j].lat));
-    const yj = toRad(points[j].lat);
+  for (let i = 0; i < pts.length; i++) {
+    const j = (i + 1) % pts.length;
+    const xi = toRad(pts[i].lng) * Math.cos(toRad(pts[i].lat)), yi = toRad(pts[i].lat);
+    const xj = toRad(pts[j].lng) * Math.cos(toRad(pts[j].lat)), yj = toRad(pts[j].lat);
     area += xi * yj - xj * yi;
   }
   return Math.abs(area / 2) * R * R;
 }
 
-function formatDistance(m) {
-  if (m < 1000) return Math.round(m) + ' m';
-  return (m / 1000).toFixed(2) + ' km';
+// ── Map bootstrap ──────────────────────────────────────────
+
+function initMap() {
+  const map = new maplibregl.Map({
+    container: 'map',
+    center: [120.5960, 16.4023],   // Baguio City, Benguet, Philippines
+    zoom: 9,
+    minZoom: 4,
+    maxZoom: 16,
+    style: { version: 8, sources: {}, layers: [] },
+  });
+  map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'top-left');
+  map.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-right');
+  state.map = map;
+  window.__map = map;  // debug / test hook
+
+  map.on('load', () => {
+    applyBasemap(state.baseMap);
+    if (_mapLoadResolve) { _mapLoadResolve(); _mapLoadResolve = null; }
+  });
+
+  map.on('click', (e) => {
+    if (state.drawMode) { addDrawPoint(e.lngLat); return; }
+    if (measureMode) { addMeasurePoint(e.lngLat); return; }
+    inspectPoint(e.lngLat);
+  });
+  map.on('dblclick', (e) => { if (state.drawMode) { e.preventDefault(); finishAreaDraw(); } });
+  map.on('contextmenu', (e) => {
+    if (state.drawMode) { e.preventDefault(); stopAreaDraw(); }
+  });
+  map.on('mousemove', () => {
+    map.getCanvas().style.cursor = state.drawMode ? 'crosshair' : 'pointer';
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && state.drawMode) stopAreaDraw();
+  });
+
+  // base map pills
+  document.querySelectorAll('#basemap-pills button').forEach((b) => {
+    b.addEventListener('click', () => {
+      document.querySelectorAll('#basemap-pills button').forEach((x) => x.classList.remove('active'));
+      b.classList.add('active');
+      applyBasemap(b.dataset.base);
+    });
+  });
+
+  // export menu
+  $('btn-export').addEventListener('click', () => $('export-menu').classList.toggle('open'));
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.menu-wrap')) $('export-menu').classList.remove('open');
+  });
+  $('export-hotspots').addEventListener('click', exportHotspotsCSV);
+  $('export-area').addEventListener('click', exportAreaCSV);
+  $('btn-draw').addEventListener('click', startAreaDraw);
+  $('btn-measure').addEventListener('click', startMeasure);
 }
 
-function formatArea(m2) {
-  if (m2 < 1e6) return Math.round(m2) + ' m²';
-  return (m2 / 1e6).toFixed(2) + ' km²';
+function applyBasemap(name) {
+  const map = state.map;
+  if (map.getSource('basemap')) map.removeLayer('basemap-layer');
+  try { map.removeSource('basemap'); } catch (e) {}
+  map.addSource('basemap', { type: 'raster', ...BASEMAPS[name] });
+  map.addLayer({ id: 'basemap-layer', type: 'raster', source: 'basemap' });
+  // MapLibre appends new layers to the TOP of the render stack, so after a
+  // switch the basemap would cover the data layers.  Move it below the
+  // bottom-most data layer to keep overlays (power/speed/depth/distance,
+  // hotspots) on top.
+  const firstDataLayer = map.getStyle().layers.find((l) => l.id !== 'basemap-layer');
+  if (firstDataLayer) map.moveLayer('basemap-layer', firstDataLayer.id);
+  state.baseMap = name;
 }
 
-// ── Measurement ─────────────────────────────────────────────
+// ── Layer manager ──────────────────────────────────────────
 
-function startMeasure(mode) {
-  if (measureMode === mode) {
-    stopMeasure();
-    return;
+function layerTileURL(layer) { return `${API}/tiles/${layer}/{z}/{x}/{y}.png`; }
+
+function buildLayerManager(metaByLayer) {
+  const list = $('layer-list');
+  list.innerHTML = '';
+  LAYER_ORDER.forEach((name) => {
+    const meta = metaByLayer[name];
+    const row = document.createElement('div');
+    if (!meta || !meta.available) {
+      row.className = 'layer-row';
+      row.innerHTML = `<span class="swatch" style="background:var(--border)"></span>
+        <span class="lname">${meta ? meta.label : name}</span>
+        <span class="lunits" style="color:var(--bad)">unavailable</span>`;
+      list.appendChild(row);
+      return;
+    }
+    state.layers[name] = { visible: name === 'power', opacity: 0.75, meta };
+    row.className = 'layer-row';
+    row.innerHTML = `<span class="swatch" style="background:${SWATCHES[name]}"></span>
+      <span class="lname">${meta.label}</span>
+      <span class="lunits">${meta.units}</span>
+      <input type="checkbox" ${name === 'power' ? 'checked' : ''}>`;
+    const cb = row.querySelector('input');
+    cb.addEventListener('change', () => toggleLayer(name, cb.checked));
+    list.appendChild(row);
+    addOpacityControl(name);
+
+    if (name === 'power') addLayerSource(name, meta);
+  });
+  updateLegend();
+}
+
+function addOpacityControl(name) {
+  const row = document.createElement('div');
+  row.className = 'layer-opacity';
+  row.innerHTML = `<input type="range" min="5" max="100" value="${state.layers[name].opacity * 100}">
+                   <span>${Math.round(state.layers[name].opacity * 100)}%</span>`;
+  row.querySelector('input').addEventListener('input', (e) => {
+    const v = parseInt(e.target.value) / 100;
+    state.layers[name].opacity = v;
+    row.querySelector('span').textContent = Math.round(v * 100) + '%';
+    if (state.map.getLayer(layerId(name))) state.map.setPaintProperty(layerId(name), 'raster-opacity', v);
+  });
+  $('layer-list').appendChild(row);
+}
+
+const layerId = (name) => 'layer-' + name;
+
+function addLayerSource(name, meta) {
+  const map = state.map;
+  const srcId = 'src-' + name;
+  if (map.getSource(srcId)) return;
+  map.addSource(srcId, {
+    type: 'raster',
+    tiles: [layerTileURL(name)],
+    tileSize: 256,
+    bounds: [meta.bounds.west, meta.bounds.south, meta.bounds.east, meta.bounds.north],
+    maxzoom: meta.max_zoom || 10,
+  });
+  map.addLayer({
+    id: layerId(name),
+    type: 'raster',
+    source: srcId,
+    paint: { 'raster-opacity': state.layers[name].opacity },
+    layout: { visibility: state.layers[name].visible ? 'visible' : 'none' },
+  });
+  map.on('click', layerId(name), (e) => {
+    if (!state.drawMode) inspectPoint(e.lngLat);
+  });
+  map.on('mousemove', layerId(name), () => {
+    map.getCanvas().style.cursor = state.drawMode ? 'crosshair' : 'pointer';
+  });
+}
+
+function toggleLayer(name, visible) {
+  state.layers[name].visible = visible;
+  const map = state.map;
+  if (visible && !map.getSource('src-' + name)) addLayerSource(name, state.layers[name].meta);
+  if (map.getLayer(layerId(name))) {
+    map.setLayoutProperty(layerId(name), 'visibility', visible ? 'visible' : 'none');
   }
-  stopMeasure();
-  measureMode = mode;
-  measurePoints = [];
-  updateMeasureUI();
-  document.getElementById('btn-' + mode).classList.add('active');
-  document.getElementById('measure-display').style.display = 'block';
+  if (visible) { state.activeLayer = name; updateLegend(); }
 }
 
-function stopMeasure() {
-  if (measureMode) {
-    document.getElementById('btn-' + measureMode).classList.remove('active');
+// ── Legend ─────────────────────────────────────────────────
+
+function updateLegend() {
+  const meta = state.layers[state.activeLayer]?.meta;
+  if (!meta) return;
+  $('lg-title').textContent = meta.label;
+  $('lg-bar').style.background = LEGEND_GRADS[state.activeLayer];
+  $('lg-units').textContent = 'Units: ' + meta.units;
+  const stops = meta.legend[0];
+  $('lg-labels').innerHTML = stops.map((s) => `<span>${fmtBig(s)}</span>`).join('');
+}
+
+// ── Site inspector (point query + time series) ─────────────
+
+async function inspectPoint(lngLat) {
+  const { lat, lng } = lngLat;
+  $('q-coords').textContent = `${lat.toFixed(4)}°N, ${lng.toFixed(4)}°E`;
+  showCard('card-query');
+
+  // Query every available layer in parallel
+  const queries = LAYER_ORDER
+    .filter((n) => state.layers[n] && state.layers[n].meta)
+    .map(async (n) => {
+      try {
+        const r = await fetch(`${API}/query?lat=${lat.toFixed(5)}&lon=${lng.toFixed(5)}&layer=${n}`);
+        if (r.ok) return { layer: n, value: (await r.json()).value };
+      } catch (e) { /* ignore */ }
+      return { layer: n, value: null };
+    });
+  const results = await Promise.all(queries);
+  const byLayer = Object.fromEntries(results.map((r) => [r.layer, r.value]));
+
+  const html = [];
+  const put = (label, value, unit, wide = false, sub = '') => {
+    html.push(`<div class="stat${wide ? ' wide' : ''}"><div class="s-v">${value}</div><div class="s-l">${label}${sub ? ` · ${sub}` : ''}</div></div>`);
+  };
+  put('Power density', byLayer.power !== null ? fmt(byLayer.power) + ' W/m²' : '—', '', false, 'mean');
+  put('Max speed', byLayer.speed !== null ? fmt(byLayer.speed, 2) + ' m/s' : '—');
+  put('Depth', byLayer.depth !== null ? fmt(byLayer.depth, 1) + ' m' : '—');
+  put('Dist. to coast', byLayer.distance !== null ? fmt(byLayer.distance, 1) + ' km' : '—');
+  $('q-stats').innerHTML = html.join('');
+
+  loadTimeseries(lat, lng);
+  loadTurbinePerformance(lat, lng);
+}
+
+async function loadTimeseries(lat, lng) {
+  const canvas = $('ts-chart');
+  try {
+    const r = await fetch(`${API}/timeseries?lat=${lat.toFixed(5)}&lon=${lng.toFixed(5)}`);
+    if (!r.ok) {
+      $('chart-wrap').style.display = 'none';
+      return;
+    }
+    const d = await r.json();
+    $('chart-wrap').style.display = 'block';
+    state.tsPoint = d;
+    renderChart(d);
+  } catch (e) {
+    $('chart-wrap').style.display = 'none';
   }
-  measureMode = null;
-  measurePoints = [];
-  clearMeasure();
 }
 
-function clearMeasure() {
-  const map = window._map;
-  if (!map) return;
-  try { map.removeLayer(measurePointId); } catch(e) {}
-  try { map.removeLayer(measureLineId); } catch(e) {}
-  try { map.removeLayer(measureFillId); } catch(e) {}
-  try { map.removeSource(measureSourceId); } catch(e) {}
-  measurePoints = [];
-  updateMeasureUI();
-  document.getElementById('btn-distance').classList.remove('active');
-  document.getElementById('btn-area').classList.remove('active');
-  document.getElementById('measure-display').style.display = 'none';
-  measureMode = null;
+function renderChart(d) {
+  const ctx = $('ts-chart').getContext('2d');
+  if (state.tsChart) state.tsChart.destroy();
+  const accent = '#4fd1ff', good = '#4ade80';
+  state.tsChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: d.time_hours.map((h) => h.toFixed(0) + 'h'),
+      datasets: [
+        { label: 'Current speed (m/s)', data: d.speed_mps, borderColor: accent, backgroundColor: accent + '22', fill: true, tension: 0.25, pointRadius: 0, borderWidth: 2, yAxisID: 'y' },
+        { label: 'Elevation η (m)', data: d.eta_m, borderColor: good, backgroundColor: 'transparent', tension: 0.25, pointRadius: 0, borderWidth: 1.5, borderDash: [4, 3], yAxisID: 'y2' },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { labels: { color: '#9aa7ba', boxWidth: 12, font: { size: 10.5 } }, position: 'bottom' },
+        tooltip: { backgroundColor: '#141a24', borderColor: 'rgba(255,255,255,0.15)', borderWidth: 1, titleColor: '#e8eef7', bodyColor: '#9aa7ba' },
+      },
+      scales: {
+        x: { ticks: { color: '#6b7689', maxTicksLimit: 8, font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.05)' } },
+        y: { position: 'left', title: { display: true, text: 'm/s', color: accent, font: { size: 10 } }, ticks: { color: '#6b7689', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.06)' } },
+        y2: { position: 'right', title: { display: true, text: 'η (m)', color: good, font: { size: 10 } }, ticks: { color: '#6b7689', font: { size: 10 } }, grid: { drawOnChartArea: false } },
+      },
+    },
+  });
 }
 
-function addMeasurePoint(lngLat) {
-  if (!measureMode) return;
-  measurePoints.push({ lng: lngLat.lng, lat: lngLat.lat });
+async function loadTurbineSpecs() {
+  try {
+    const r = await fetch(API + '/turbines');
+    if (!r.ok) return;
+    const data = await r.json();
+    state.turbineSpecs = data.turbines || [];
+    const sel = $('turbine-select');
+    sel.innerHTML = state.turbineSpecs
+      .map((t) => `<option value="${t.id}">${t.name} — ${fmt(t.rated_power_kw, 0)} kW (${t.manufacturer})</option>`)
+      .join('');
+    sel.addEventListener('change', () => { if (state.turbinePerf) renderTurbine(); });
+  } catch (e) { /* API unavailable — panel stays empty */ }
+}
+
+async function loadTurbinePerformance(lat, lng) {
+  const panel = ['turbine-select', 'turbine-stats', 'turbine-chart-wrap', 'pcurve-wrap'];
+  try {
+    const r = await fetch(`${API}/turbine_performance?lat=${lat.toFixed(5)}&lon=${lng.toFixed(5)}`);
+    if (!r.ok) { hideTurbinePanel(true); return; }
+    state.turbinePerf = await r.json();
+    const sel = $('turbine-select');
+    if (!sel.value && state.turbineSpecs.length) sel.value = state.turbineSpecs[0].id;
+    renderTurbine();
+  } catch (e) {
+    hideTurbinePanel(true);
+  }
+}
+
+function hideTurbinePanel(missing = false) {
+  ['turbine-chart-wrap', 'pcurve-wrap'].forEach((id) => { const el = $(id); el.style.display = 'none'; });
+  $('turbine-chart-label').style.display = 'none';
+  $('pcurve-label').style.display = 'none';
+  $('turbine-stats').innerHTML = `<div class="hs-empty">${missing ? 'Run the model to model turbine output at this site.' : ''}</div>`;
+  if (missing) $('turbine-select').innerHTML = '';
+}
+
+function renderTurbine() {
+  const perf = state.turbinePerf;
+  if (!perf || !perf.turbines.length) { hideTurbinePanel(true); return; }
+  const id = $('turbine-select').value;
+  const spec = state.turbineSpecs.find((s) => s.id === id);
+  const p = perf.turbines.find((t) => t.id === id);
+  if (!spec || !p) return;
+
+  ['turbine-chart-wrap', 'pcurve-wrap'].forEach((el) => { $(el).style.display = 'block'; });
+  $('turbine-chart-label').style.display = 'block';
+  $('pcurve-label').style.display = 'block';
+
+  $('turbine-stats').innerHTML = `
+    <div class="stat"><div class="s-v">${fmt(spec.rated_power_kw, 0)} kW</div><div class="s-l">Rated power</div></div>
+    <div class="stat"><div class="s-v">${(p.capacity_factor * 100).toFixed(1)}%</div><div class="s-l">Capacity factor</div></div>
+    <div class="stat"><div class="s-v">${fmt(p.aep_gwh_yr, 2)} GWh</div><div class="s-l">AEP per year</div></div>
+    <div class="stat"><div class="s-v">${fmt(p.energy_window_kwh / 1000, 2)} MWh</div><div class="s-l">Energy in window</div></div>
+    <div class="stat"><div class="s-v">${fmt(p.mean_output_kw, 1)} kW</div><div class="s-l">Mean output</div></div>
+    <div class="stat"><div class="s-v">${p.pct_time_generating}%</div><div class="s-l">Time generating</div></div>
+    <div class="stat wide"><div class="s-v">${spec.rated_speed_mps} m/s</div><div class="s-l">Rated speed · cut-in ${spec.cut_in_mps} · cut-out ${spec.cut_out_mps}</div></div>`;
+
+  renderTurbineOutputChart(p);
+  renderPowerCurveChart(spec);
+}
+
+function renderTurbineOutputChart(p) {
+  const ctx = $('turbine-chart').getContext('2d');
+  if (state.turbineChart) state.turbineChart.destroy();
+  const labels = state.tsPoint ? state.tsPoint.time_hours.map((h) => h.toFixed(0) + 'h') : [];
+  state.turbineChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Turbine output (kW)',
+        data: p.power_series_kw,
+        borderColor: '#fbbf24',
+        backgroundColor: '#fbbf2422',
+        fill: true, tension: 0.2, pointRadius: 0, borderWidth: 2, yAxisID: 'y',
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { backgroundColor: '#141a24', borderColor: 'rgba(255,255,255,0.15)', borderWidth: 1, titleColor: '#e8eef7', bodyColor: '#9aa7ba' },
+      },
+      scales: {
+        x: { ticks: { color: '#6b7689', maxTicksLimit: 6, font: { size: 9 } }, grid: { color: 'rgba(255,255,255,0.05)' } },
+        y: { title: { display: true, text: 'kW', color: '#fbbf24', font: { size: 10 } }, ticks: { color: '#6b7689', font: { size: 9 } }, grid: { color: 'rgba(255,255,255,0.06)' } },
+      },
+    },
+  });
+}
+
+function renderPowerCurveChart(spec) {
+  const ctx = $('pcurve-chart').getContext('2d');
+  if (state.pcurveChart) state.pcurveChart.destroy();
+  const curve = spec.power_curve || [];
+  state.pcurveChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: curve.map((pt) => pt[0].toFixed(2)),
+      datasets: [{
+        label: `${spec.name} power curve`,
+        data: curve.map((pt) => pt[1]),
+        borderColor: '#f87171', backgroundColor: '#f8717111',
+        fill: true, tension: 0.1, pointRadius: 0, borderWidth: 2,
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { backgroundColor: '#141a24', borderColor: 'rgba(255,255,255,0.15)', borderWidth: 1, titleColor: '#e8eef7', bodyColor: '#9aa7ba', callbacks: { title: (items) => 'Current speed: ' + items[0].label + ' m/s' } },
+      },
+      scales: {
+        x: { title: { display: true, text: 'Current speed (m/s)', color: '#9aa7ba', font: { size: 9.5 } }, ticks: { color: '#6b7689', maxTicksLimit: 8, font: { size: 9 } }, grid: { color: 'rgba(255,255,255,0.05)' } },
+        y: { title: { display: true, text: 'kW', color: '#f87171', font: { size: 10 } }, ticks: { color: '#6b7689', font: { size: 9 } }, grid: { color: 'rgba(255,255,255,0.06)' } },
+      },
+    },
+  });
+}
+
+function startAreaAtQuery() {
+  if (!state.tsPoint) { toast('No model data at this location', true); return; }
+  showCard('card-area');
+  startAreaDraw();
+}
+
+// ── Area assessment (draw polygon) ─────────────────────────
+
+let measureSourceId = 'measure-source';
+
+function startAreaDraw() {
+  if (state.drawMode) { finishAreaDraw(); return; }
+  state.drawMode = true;
+  state.drawPoints = [];
+  $('btn-draw').classList.add('active');
+  $('drawbanner').classList.add('visible');
+  showCard('card-area');
+  $('area-results').innerHTML = '';
+  $('area-finish').disabled = true;
+  if (state.map.getSource(measureSourceId)) updateMeasureLayer();
+}
+
+function addDrawPoint(lngLat) {
+  if (!state.drawMode) return;
+  state.drawPoints.push({ lng: lngLat.lng, lat: lngLat.lat });
   updateMeasureLayer();
-  updateMeasureUI();
+  $('area-finish').disabled = state.drawPoints.length < 3;
 }
 
 function updateMeasureLayer() {
-  const map = window._map;
-  if (!map || measurePoints.length === 0) return;
-
-  const geojson = {
-    type: 'FeatureCollection',
-    features: []
-  };
-
-  if (measureMode === 'distance') {
-    if (measurePoints.length >= 2) {
-      geojson.features.push({
-        type: 'Feature',
-        geometry: {
-          type: 'LineString',
-          coordinates: measurePoints.map(p => [p.lng, p.lat])
-        }
-      });
-    }
-  } else if (measureMode === 'area') {
-    if (measurePoints.length >= 3) {
-      const coords = measurePoints.map(p => [p.lng, p.lat]);
-      coords.push(coords[0]); // close polygon
-      geojson.features.push({
-        type: 'Feature',
-        geometry: { type: 'Polygon', coordinates: [coords] }
-      });
-    }
-    if (measurePoints.length >= 2) {
-      geojson.features.push({
-        type: 'Feature',
-        geometry: {
-          type: 'LineString',
-          coordinates: measurePoints.map(p => [p.lng, p.lat])
-        }
-      });
-    }
+  const map = state.map;
+  const pts = state.drawPoints;
+  const features = [];
+  if (pts.length >= 2) {
+    features.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: pts.map((p) => [p.lng, p.lat]) } });
   }
-
-  // Points
-  geojson.features.push({
-    type: 'Feature',
-    geometry: {
-      type: 'MultiPoint',
-      coordinates: measurePoints.map(p => [p.lng, p.lat])
-    }
-  });
-
-  // Create or update source
+  if (pts.length >= 3) {
+    const coords = pts.map((p) => [p.lng, p.lat]);
+    coords.push(coords[0]);
+    features.push({ type: 'Feature', geometry: { type: 'Polygon', coordinates: [coords] } });
+  }
+  if (pts.length >= 1) {
+    features.push({ type: 'Feature', geometry: { type: 'MultiPoint', coordinates: pts.map((p) => [p.lng, p.lat]) } });
+  }
+  const gj = { type: 'FeatureCollection', features };
   if (map.getSource(measureSourceId)) {
-    map.getSource(measureSourceId).setData(geojson);
+    map.getSource(measureSourceId).setData(gj);
   } else {
-    map.addSource(measureSourceId, { type: 'geojson', data: geojson });
-
-    // Fill layer (area)
-    map.addLayer({
-      id: measureFillId,
-      type: 'fill',
-      source: measureSourceId,
-      paint: {
-        'fill-color': '#4fc3f7',
-        'fill-opacity': 0.2,
-      },
-      filter: ['==', '$type', 'Polygon']
-    });
-
-    // Line layer
-    map.addLayer({
-      id: measureLineId,
-      type: 'line',
-      source: measureSourceId,
-      paint: {
-        'line-color': '#4fc3f7',
-        'line-width': 2.5,
-        'line-dasharray': [4, 2],
-      },
-      filter: ['==', '$type', 'LineString']
-    });
-
-    // Points layer
-    map.addLayer({
-      id: measurePointId,
-      type: 'circle',
-      source: measureSourceId,
-      paint: {
-        'circle-radius': 5,
-        'circle-color': '#fff',
-        'circle-stroke-color': '#4fc3f7',
-        'circle-stroke-width': 2,
-      },
-      filter: ['==', '$type', 'MultiPoint']
-    });
+    map.addSource(measureSourceId, { type: 'geojson', data: gj });
+    map.addLayer({ id: 'measure-fill', type: 'fill', source: measureSourceId, paint: { 'fill-color': '#4fd1ff', 'fill-opacity': 0.18 }, filter: ['==', '$type', 'Polygon'] });
+    map.addLayer({ id: 'measure-line', type: 'line', source: measureSourceId, paint: { 'line-color': '#4fd1ff', 'line-width': 2.5, 'line-dasharray': [5, 3] }, filter: ['==', '$type', 'LineString'] });
+    map.addLayer({ id: 'measure-pts', type: 'circle', source: measureSourceId, paint: { 'circle-radius': 5, 'circle-color': '#fff', 'circle-stroke-color': '#4fd1ff', 'circle-stroke-width': 2 }, filter: ['==', '$type', 'MultiPoint'] });
   }
 }
 
-function updateMeasureUI() {
-  const display = document.getElementById('measure-display');
-  const valueEl = document.getElementById('measure-value');
-  if (!measureMode || measurePoints.length < 2) {
-    if (measurePoints.length === 0) {
-      display.style.display = measureMode ? 'block' : 'none';
-      valueEl.textContent = measureMode === 'area' ? 'Click to draw' : 'Click to measure';
-    } else {
-      valueEl.textContent = 'Click to add point';
-    }
+function finishAreaDraw() {
+  if (state.drawPoints.length < 3) { toast('Draw at least 3 points', true); return; }
+  state.drawMode = false;
+  $('btn-draw').classList.remove('active');
+  $('drawbanner').classList.remove('visible');
+  $('area-finish').disabled = true;
+  computeAreaStats();
+}
+
+function stopAreaDraw() {
+  state.drawMode = false;
+  state.drawPoints = [];
+  $('btn-draw').classList.remove('active');
+  $('drawbanner').classList.remove('visible');
+  $('area-finish').disabled = true;
+  clearMeasureLayer();
+}
+
+function clearMeasureLayer() {
+  const map = state.map;
+  ['measure-fill', 'measure-line', 'measure-pts'].forEach((l) => { if (map.getLayer(l)) map.removeLayer(l); });
+  if (map.getSource(measureSourceId)) map.removeSource(measureSourceId);
+}
+
+async function computeAreaStats() {
+  const polygon = state.drawPoints.map((p) => [p.lng, p.lat]);
+  const eff = parseInt($('f-eff').value) / 100;
+  $('area-results').innerHTML = '<div class="hs-empty">Computing…</div>';
+  try {
+    const r = await fetch(API + '/area_stats', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ polygon, efficiency: eff }),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    const d = await r.json();
+    state.areaLast = { polygon, stats: d, efficiency: eff };
+    renderAreaResults(d, eff);
+    $('export-area').disabled = false;
+  } catch (e) {
+    $('area-results').innerHTML = `<div class="hs-empty" style="color:var(--bad)">Assessment failed: ${e.message}</div>`;
+  }
+}
+
+function renderAreaResults(d, eff) {
+  const polyKm2 = polyAreaM2(state.drawPoints) / 1e6;
+  const html = `
+    <div class="section-label">Resource within polygon</div>
+    <div class="stat-grid">
+      <div class="stat"><div class="s-v">${fmt(d.area_km2, 2)} km²</div><div class="s-l">Model cells</div></div>
+      <div class="stat"><div class="s-v">${fmt(polyKm2, 2)} km²</div><div class="s-l">Polygon area</div></div>
+      <div class="stat"><div class="s-v">${fmt(d.mean_power_density)} W/m²</div><div class="s-l">Mean power density</div></div>
+      <div class="stat"><div class="s-v">${fmt(d.max_power_density)} W/m²</div><div class="s-l">Peak power density</div></div>
+      <div class="stat"><div class="s-v">${fmt(d.gross_mw, 2)} MW</div><div class="s-l">Gross tidal power</div></div>
+      <div class="stat"><div class="s-v">${fmt(d.extractable_mw, 2)} MW</div><div class="s-l">Extractable @${Math.round(eff * 100)}%</div></div>
+      <div class="stat wide"><div class="s-v">${fmt(d.aep_gwh_yr, 2)} GWh/yr</div><div class="s-l">Annual energy production</div></div>
+      <div class="stat wide"><div class="s-v">${d.depth_range_m ? d.depth_range_m[0] + '–' + d.depth_range_m[1] + ' m' : '—'}</div><div class="s-l">Depth range</div></div>
+    </div>`;
+  $('area-results').innerHTML = html;
+}
+
+// ── Hotspots ───────────────────────────────────────────────
+
+async function loadHotspots() {
+  try {
+    const r = await fetch(API + '/hotspots?limit=200');
+    if (!r.ok) { $('hotspot-list').innerHTML = '<div class="hs-empty">Run the model to generate hotspots.</div>'; return; }
+    const fc = await r.json();
+    state.hotspots = fc.features;
+    renderHotspots();
+  } catch (e) {
+    $('hotspot-list').innerHTML = '<div class="hs-empty">Failed to load hotspots.</div>';
+  }
+}
+
+function renderHotspots() {
+  const map = state.map;
+  // Remove previous hotspot layers (guarded — removeLayer logs on missing ids)
+  ['hot-pts', 'hot-labels'].forEach((l) => { if (map.getLayer(l)) map.removeLayer(l); });
+  if (map.getSource('hot-src')) map.removeSource('hot-src');
+
+  if (!state.hotspots.length) {
+    $('hotspot-list').innerHTML = '<div class="hs-empty">No hotspots above threshold.</div>';
     return;
   }
+  map.addSource('hot-src', { type: 'geojson', data: { type: 'FeatureCollection', features: state.hotspots } });
+  map.addLayer({
+    id: 'hot-pts', type: 'circle', source: 'hot-src',
+    paint: {
+      'circle-radius': ['interpolate', ['linear'], ['get', 'power_density_Wm2'], 200, 4, 1000, 9, 2000, 14],
+      'circle-color': ['interpolate', ['linear'], ['get', 'power_density_Wm2'], 200, '#22d3ee', 600, '#fbbf24', 1200, '#f87171'],
+      'circle-opacity': 0.85, 'circle-stroke-color': '#0b0e14', 'circle-stroke-width': 1,
+    },
+  });
+  map.on('click', 'hot-pts', (e) => {
+    const f = e.features[0];
+    inspectPoint({ lng: f.geometry.coordinates[0], lat: f.geometry.coordinates[1] });
+  });
+  map.on('mouseenter', 'hot-pts', () => map.getCanvas().style.cursor = 'pointer');
+  map.on('mouseleave', 'hot-pts', () => map.getCanvas().style.cursor = '');
 
-  display.style.display = 'block';
+  // Top-10 list
+  const top = state.hotspots.slice(0, 10);
+  $('hotspot-list').innerHTML = top.map((f, i) => {
+    const p = f.properties;
+    const name = p.name || `Site ${String.fromCharCode(65 + i)}`;
+    return `<div class="hotspot-item" data-i="${i}">
+      <div class="hotspot-rank">${i + 1}</div>
+      <div class="hotspot-meta"><div class="hs-name">${name}</div>
+        <div class="hs-sub">${f.geometry.coordinates[1].toFixed(2)}°N, ${f.geometry.coordinates[0].toFixed(2)}°E</div></div>
+      <div class="hotspot-val"><div class="hs-pw">${Math.round(p.power_density_Wm2)} W/m²</div>
+        <div class="hs-depth">${p.depth_m ? Math.round(p.depth_m) + ' m' : ''}</div></div>
+    </div>`;
+  }).join('');
+  document.querySelectorAll('.hotspot-item').forEach((el) => {
+    el.addEventListener('click', () => {
+      const f = state.hotspots[parseInt(el.dataset.i)];
+      const [lng, lat] = f.geometry.coordinates;
+      state.map.flyTo({ center: [lng, lat], zoom: 9 });
+      inspectPoint({ lng, lat });
+    });
+  });
+}
 
-  if (measureMode === 'distance') {
-    let total = 0;
-    for (let i = 1; i < measurePoints.length; i++) {
-      total += haversineDistance(measurePoints[i - 1], measurePoints[i]);
-    }
-    valueEl.textContent = formatDistance(total);
-  } else if (measureMode === 'area') {
-    if (measurePoints.length >= 3) {
-      valueEl.textContent = formatArea(polygonArea(measurePoints));
-    } else {
-      valueEl.textContent = 'Add ' + (3 - measurePoints.length) + ' more point(s)';
-    }
+// ── Resource screening filters ─────────────────────────────
+
+let resourceTimer = null;
+
+function bindResourceFilters() {
+  const fmp = $('f-minpower'), fdm = $('f-depth-min'), fdx = $('f-depth-max'), fe = $('f-eff');
+  const refresh = () => {
+    const mp = parseInt(fmp.value), dmin = parseInt(fdm.value), dmax = parseInt(fdx.value), eff = parseInt(fe.value);
+    $('f-minpower-v').textContent = mp + ' W/m²';
+    $('f-depth-v').textContent = dmin + '–' + dmax + ' m';
+    $('f-eff-v').textContent = eff + '%';
+    // keep min <= max
+    if (dmin > dmax) { dmax = dmin; fdx.value = dmin; }
+    clearTimeout(resourceTimer);
+    resourceTimer = setTimeout(() => fetchResource(mp, dmin, dmax, eff), 350);
+  };
+  [fmp, fdm, fdx, fe].forEach((el) => el.addEventListener('input', refresh));
+  refresh();
+}
+
+async function fetchResource(minPower, depthMin, depthMax, eff) {
+  try {
+    const url = `${API}/resource?min_power=${minPower}&depth_min=${depthMin}&depth_max=${depthMax}&efficiency=${eff / 100}`;
+    const r = await fetch(url);
+    if (!r.ok) throw new Error();
+    const d = await r.json();
+    $('rt-area').textContent = fmt(d.area_km2, 1) + ' km²';
+    $('rt-mw').textContent = fmt(d.extractable_mw, 2) + ' MW';
+    $('rt-aep').textContent = fmt(d.aep_gwh_yr, 1) + ' GWh';
+    $('rt-mean').textContent = fmt(d.mean_power_density) + ' W/m²';
+    $('rt-cells').textContent = fmtBig(d.n_cells);
+  } catch (e) {
+    ['rt-area', 'rt-mw', 'rt-aep', 'rt-mean', 'rt-cells'].forEach((id) => $(id).textContent = '—');
   }
 }
 
-// ── Main ────────────────────────────────────────────────────
+// ── Exports ────────────────────────────────────────────────
 
-(async function () {
-  const apiBase = window.location.origin + '/api';
-
-  const map = new maplibregl.Map({
-    container: 'map',
-    center: [122.5, 12.5],
-    zoom: 6,
-    minZoom: 4,
-    maxZoom: 14,
-    style: {
-      version: 8,
-      sources: {
-        osm: {
-          type: 'raster',
-          tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
-          tileSize: 256,
-          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-          maxzoom: 19,
-        },
-      },
-      layers: [
-        { id: 'osm-layer', type: 'raster', source: 'osm' },
-      ],
-    },
+function exportHotspotsCSV() {
+  if (!state.hotspots.length) { toast('No hotspots to export', true); return; }
+  const rows = [['name', 'lat', 'lon', 'power_density_Wm2', 'depth_m']];
+  state.hotspots.forEach((f, i) => {
+    const p = f.properties;
+    rows.push([p.name || 'Site ' + (i + 1), f.geometry.coordinates[1], f.geometry.coordinates[0], p.power_density_Wm2, p.depth_m ?? '']);
   });
+  downloadCSV('tidal_hotspots.csv', rows);
+  toast('Hotspots exported to CSV');
+}
 
-  map.addControl(new maplibregl.NavigationControl(), 'top-left');
-  map.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-right');
+function exportAreaCSV() {
+  if (!state.areaLast) { toast('No site assessment yet', true); return; }
+  const { polygon, stats, efficiency } = state.areaLast;
+  const rows = [
+    ['metric', 'value', 'unit'],
+    ['polygon_area', fmt(polyAreaM2(polygon) / 1e6, 4), 'km2'],
+    ['model_area', stats.area_km2, 'km2'],
+    ['mean_power_density', stats.mean_power_density, 'W/m2'],
+    ['max_power_density', stats.max_power_density, 'W/m2'],
+    ['gross_power', stats.gross_mw, 'MW'],
+    ['efficiency', Math.round(efficiency * 100), '%'],
+    ['extractable_power', stats.extractable_mw, 'MW'],
+    ['aep', stats.aep_gwh_yr, 'GWh/yr'],
+    ['depth_range_m', stats.depth_range_m ? stats.depth_range_m.join('-') : '', 'm'],
+  ];
+  rows.push(['', '', '']);
+  rows.push(['polygon_lon', 'polygon_lat', '']);
+  polygon.forEach(([lon, lat]) => rows.push([lon, lat, '']));
+  downloadCSV('site_assessment.csv', rows);
+  toast('Site assessment exported to CSV');
+}
 
-  window._map = map;
+function downloadCSV(filename, rows) {
+  const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+  const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
 
-  // ── Map click: query or measure ──────────────────────────
+// ── Measurement (distance) ─────────────────────────────────
 
-  map.on('click', async (e) => {
-    if (measureMode) {
-      addMeasurePoint(e.lngLat);
-      return;
-    }
+let measureMode = false;
+let measurePts = [];
 
-    const { lat, lng } = e.lngLat;
-    document.getElementById('query-msg').textContent = 'Querying…';
+function startMeasure() {
+  measureMode = !measureMode;
+  $('btn-measure').classList.toggle('active', measureMode);
+  if (!measureMode) { measurePts = []; clearMeasureLayer(); return; }
+  measurePts = [];
+  toast('Click two points to measure distance — Esc to finish');
+}
 
-    try {
-      const r = await fetch(`${apiBase}/query?lat=${lat.toFixed(6)}&lon=${lng.toFixed(6)}`);
-      if (r.ok) {
-        const d = await r.json();
-        document.getElementById('val-power').textContent = d.power_density_Wm2.toFixed(1) + ' W/m²';
-        document.getElementById('val-coords').textContent =
-          lat.toFixed(4) + '°N, ' + lng.toFixed(4) + '°E';
-        document.getElementById('query-msg').textContent = '';
-      } else {
-        document.getElementById('val-power').textContent = '—';
-        document.getElementById('val-coords').textContent =
-          lat.toFixed(4) + '°N, ' + lng.toFixed(4) + '°E';
-        document.getElementById('query-msg').textContent = '(land / no data)';
-      }
-    } catch (err) {
-      document.getElementById('query-msg').textContent = '(error querying)';
-    }
-  });
+function addMeasurePoint(lngLat) {
+  measurePts.push({ lng: lngLat.lng, lat: lngLat.lat });
+  state.drawPoints = measurePts;
+  updateMeasureLayer();
+  if (measurePts.length >= 2) {
+    let total = 0;
+    for (let i = 1; i < measurePts.length; i++) total += haversine(measurePts[i - 1], measurePts[i]);
+    toast('Distance: ' + (total < 1000 ? Math.round(total) + ' m' : (total / 1000).toFixed(2) + ' km'));
+  }
+}
 
-  // Double-click: finish measurement
-  map.on('dblclick', (e) => {
-    if (measureMode) {
-      e.preventDefault();
-      stopMeasure();
-    }
-  });
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && measureMode) { measureMode = false; measurePts = []; clearMeasureLayer(); $('btn-measure').classList.remove('active'); }
+});
 
-  // Right-click: remove the last point, or cancel when none remain
-  map.on('contextmenu', (e) => {
-    if (measureMode) {
-      e.preventDefault();
-      if (measurePoints.length > 0) {
-        measurePoints.pop();
-        updateMeasureLayer();
-        updateMeasureUI();
-      } else {
-        stopMeasure();
-      }
-    }
-  });
+// ── Boot ───────────────────────────────────────────────────
 
-  // Cursor
-  map.on('mousemove', (e) => {
-    map.getCanvas().style.cursor = measureMode ? 'crosshair' : 'pointer';
-  });
+(async function boot() {
+  initMap();
+  await mapLoadPromise;  // wait for the style before adding sources/layers
 
-  // Keyboard: Escape to cancel
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && measureMode) {
-      stopMeasure();
-    }
-  });
-
-  // ── Load metadata and tidal layer ────────────────────────
-
-  let meta = null;
+  // Fetch layer metadata and build the manager
   try {
-    const resp = await fetch(apiBase + '/metadata');
-    meta = await resp.json();
+    const r = await fetch(API + '/layers');
+    const data = await r.json();
+    buildLayerManager(data.layers);
+    if (!data.results_nc) console.warn('results.nc not found — time series unavailable');
   } catch (e) {
-    console.warn('Metadata fetch failed', e);
+    $('layer-list').innerHTML = '<div class="hs-empty">API unavailable — run the web service with model outputs.</div>';
   }
 
-  if (meta && meta.available) {
-    map.addSource('tidal-power', {
-      type: 'raster',
-      tiles: [apiBase + '/tiles/{z}/{x}/{y}.png'],
-      tileSize: 256,
-      bounds: [meta.bounds.west, meta.bounds.south, meta.bounds.east, meta.bounds.north],
-      maxzoom: meta.max_zoom || 10,
-    });
-
-    map.addLayer({
-      id: 'tidal-layer',
-      type: 'raster',
-      source: 'tidal-power',
-      paint: { 'raster-opacity': 0.75 },
-    });
-
-    window._tidalLayerReady = true;
-
-    // Populate stats
-    if (meta.stats) {
-      document.getElementById('stat-max').textContent = meta.stats.max.toFixed(0);
-      document.getElementById('stat-mean').textContent = meta.stats.mean.toFixed(0);
-      document.getElementById('stat-p95').textContent = meta.stats.p95.toFixed(0);
-      document.getElementById('stat-min').textContent = meta.stats.min.toFixed(0);
-    }
-  } else {
-    document.getElementById('legend').style.display = 'none';
-    document.getElementById('val-power').textContent = '(no data)';
-    document.getElementById('stat-max').textContent = 'N/A';
-    document.getElementById('stat-mean').textContent = 'N/A';
-    document.getElementById('stat-p95').textContent = 'N/A';
-    document.getElementById('stat-min').textContent = 'N/A';
-  }
+  loadHotspots();
+  bindResourceFilters();
+  loadTurbineSpecs();
 })();
 </script>
-
 </body>
 </html>
