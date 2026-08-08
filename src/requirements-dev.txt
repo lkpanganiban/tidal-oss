@@ -1,0 +1,3 @@
+# --- Development/test dependencies (installed in the Docker image so the
+# documented test command works; NOT part of the runtime lockfile) ---
+pytest>=8

@@ -23,6 +23,7 @@ simulation:
   cd: 0.0025                    # bottom drag coefficient
   ah: 0.0                       # horizontal eddy viscosity (0 = off)
   advection: false
+  use_numba: null               # null = auto (JIT when available); true/false to force
   rho: 1025.0                   # seawater density [kg/m³]
 
 tidal_forcing:

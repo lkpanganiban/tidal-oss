@@ -56,8 +56,7 @@ DATASETS: dict[str, dict] = {
         "post_process": "unzip_osm",
         "manual_url": "https://download.geofabrik.de/asia/philippines.html",
         "manual_note": (
-            "Download the .shp.zip from Geofabrik and place it in the "
-            "data/ directory."
+            "Download the .shp.zip from Geofabrik and place it in the data/ directory."
         ),
     },
     "gadm": {
@@ -150,7 +149,7 @@ def _report_hook(block_num: int, block_size: int, total_size: int):
     mb_done = downloaded / 1e6
     mb_total = total_size / 1e6
     print(
-        f"\r  {_bar(pct)} {pct*100:5.1f}%  {mb_done:7.1f} / {mb_total:.1f} MB",
+        f"\r  {_bar(pct)} {pct * 100:5.1f}%  {mb_done:7.1f} / {mb_total:.1f} MB",
         end="",
         flush=True,
     )
@@ -173,15 +172,37 @@ def _download(url: str, dest: Path) -> bool:
         return False
 
 
+def _safe_member_path(extract_dir: Path, member: str) -> Path:
+    """Resolve an archive member path safely inside *extract_dir*.
+
+    Guards against zip-slip attacks where a crafted archive contains
+    members such as ``../evil.py`` or absolute paths that would escape
+    the extraction directory.
+    """
+    member_path = Path(member)
+    if member_path.is_absolute() or ".." in member_path.parts:
+        raise ValueError(f"Unsafe archive member path: {member!r}")
+    target = Path(extract_dir) / member_path
+    extract_root = Path(extract_dir).resolve()
+    try:
+        target_resolved = target.resolve()
+    except OSError:
+        # resolve() can fail on symlink loops etc.; fall back to parts check
+        target_resolved = target
+    if not str(target_resolved).startswith(str(extract_root)):
+        raise ValueError(f"Archive member escapes extraction dir: {member!r}")
+    return target
+
+
 def _unzip(zip_path: Path, extract_dir: Path, flatten: bool = False):
-    """Unzip a file into extract_dir."""
+    """Unzip a file into extract_dir (safe against path traversal)."""
     print(f"  → extracting to {extract_dir}/")
     with zipfile.ZipFile(zip_path, "r") as zf:
         for member in zf.namelist():
             target = (
-                Path(extract_dir) / Path(member).name
+                _safe_member_path(extract_dir, Path(member).name)
                 if flatten
-                else Path(extract_dir) / member
+                else _safe_member_path(extract_dir, member)
             )
             if member.endswith("/"):
                 target.mkdir(parents=True, exist_ok=True)
@@ -218,7 +239,7 @@ def download_dataset(
     ds = DATASETS[key]
     name = ds["name"]
 
-    print(f"\n{'─'*60}")
+    print(f"\n{'─' * 60}")
     print(f"  {name}")
     print(f"  Size: {ds['size_hint']}")
     if not ds["required"]:
@@ -239,7 +260,7 @@ def download_dataset(
     # Also check post-process output
     post = ds.get("post_process")
     if post and _post_process_present(ds, data_dir, dest_path, post):
-        print(f"  ✓ already extracted")
+        print("  ✓ already extracted")
         return True
 
     # --- Attempt auto-download ---
@@ -266,9 +287,7 @@ def _post_process_present(
     """Check if post-processed output already exists."""
     prefix = ds["dest"].rsplit(".", 1)[0] if ds["dest"] else ds.get("key", "")
     extract_dir = data_dir / prefix
-    if extract_dir.is_dir() and any(extract_dir.iterdir()):
-        return True
-    return False
+    return extract_dir.is_dir() and any(extract_dir.iterdir())
 
 
 def _post_process(ds: dict, data_dir: Path, dest_path: Path | None):
@@ -304,9 +323,11 @@ def interactive(data_dir: Path):
     for key, ds in DATASETS.items():
         req = "required" if ds["required"] else "optional"
         if ds["urls"]:
-            choice = input(
-                f"  Download {ds['name']} ({req}, {ds['size_hint']})? [y/N]: "
-            ).strip().lower()
+            choice = (
+                input(f"  Download {ds['name']} ({req}, {ds['size_hint']})? [y/N]: ")
+                .strip()
+                .lower()
+            )
         else:
             print(f"\n  {ds['name']} ({req}) — manual download only.")
             choice = input("  Show instructions? [Y/n]: ").strip().lower()
@@ -334,14 +355,14 @@ def auto_all(data_dir: Path):
     )
 
     acquired = {}
-    for key, ds in DATASETS.items():
+    for key in DATASETS:
         acquired[key] = download_dataset(key, data_dir)
 
     _print_summary(acquired, data_dir)
 
 
 def _print_summary(acquired: dict, data_dir: Path):
-    print(f"\n{'─'*60}")
+    print(f"\n{'─' * 60}")
     print("  Summary\n")
     for key, ok in acquired.items():
         ds = DATASETS[key]

@@ -69,9 +69,10 @@ def load_gebco(
         .values.astype(np.float64)
     )
 
-    if elevation.ndim == 2:
-        if elevation.shape[0] != len(lat) or elevation.shape[1] != len(lon):
-            elevation = elevation.T
+    if elevation.ndim == 2 and (
+        elevation.shape[0] != len(lat) or elevation.shape[1] != len(lon)
+    ):
+        elevation = elevation.T
 
     ds.close()
     return lon, lat, elevation
@@ -113,7 +114,9 @@ def regrid_bathymetry(
     lat_new = np.linspace(lat_min, lat_max, ny)
 
     if elevation_src.ndim == 2:
-        if elevation_src.shape[0] == len(lat_src) and elevation_src.shape[1] == len(lon_src):
+        if elevation_src.shape[0] == len(lat_src) and elevation_src.shape[1] == len(
+            lon_src
+        ):
             interp = RegularGridInterpolator(
                 (lat_src, lon_src),
                 elevation_src,
@@ -229,8 +232,9 @@ def _find_coord(ds: xr.Dataset, candidates: list[str]) -> str:
 
 def _find_data_var(ds: xr.Dataset) -> str:
     skip = set(ds.coords) | set(ds.dims)
-    spatial = None
+    spatial: str | None = None
     for name in ds.data_vars:
+        name = str(name)
         if name in skip:
             continue
         ndim = ds[name].ndim
@@ -243,13 +247,20 @@ def _find_data_var(ds: xr.Dataset) -> str:
 
 
 def _simple_bin(arr: np.ndarray, ny: int, nx: int) -> np.ndarray:
-    """Coarse-grain by block averaging."""
+    """Coarse-grain by block averaging (vectorised).
+
+    Pads the source array with edge values up to a multiple of the target
+    shape, then reshapes into (ny, ny_block, nx, nx_block) blocks and
+    averages each block.  Block sizes may differ by at most one cell,
+    matching the semantics of the original loop-based binning.
+    """
     sy, sx = arr.shape
-    result = np.zeros((ny, nx))
-    y_bins = np.linspace(0, sy, ny + 1).astype(int)
-    x_bins = np.linspace(0, sx, nx + 1).astype(int)
-    for j in range(ny):
-        for i in range(nx):
-            block = arr[y_bins[j] : y_bins[j + 1], x_bins[i] : x_bins[i + 1]]
-            result[j, i] = np.mean(block) if block.size > 0 else 0.0
-    return result
+    if sy == 0 or sx == 0:
+        return np.zeros((ny, nx))
+    by = int(np.ceil(sy / ny))
+    bx = int(np.ceil(sx / nx))
+    pad_y = by * ny - sy
+    pad_x = bx * nx - sx
+    if pad_y > 0 or pad_x > 0:
+        arr = np.pad(arr, ((0, pad_y), (0, pad_x)), mode="edge")
+    return arr.reshape(ny, by, nx, bx).mean(axis=(1, 3))

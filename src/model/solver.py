@@ -9,18 +9,20 @@ from __future__ import annotations
 
 import logging
 import time as time_module
-from typing import Callable, Union
+from collections.abc import Callable
 
 import numpy as np
 
+from .forcing import TidalBoundary
 from .grid import StructuredGrid
+from .kernels import _step_forward_backward, numba_available
 from .utils import (
     interpolate_to_u,
     interpolate_to_v,
-    v_at_u_pts,
-    u_at_v_pts,
-    speed,
     power_density,
+    speed,
+    u_at_v_pts,
+    v_at_u_pts,
 )
 
 logger = logging.getLogger(__name__)
@@ -37,9 +39,10 @@ class ShallowWaterSolver:
       1. Momentum tendency (pressure gradient, Coriolis, advection, mixing).
       2. Semi-implicit bottom-friction correction.
       3. Free-surface update via continuity.
-      4. Boundary-condition enforcement.
+      4. Boundary-condition enforcement (prescribed η at open cells).
 
-    Open-boundary cells have η prescribed; u/v at open edges use zero-gradient.
+    Open-boundary cells have η prescribed; velocities on the outer grid
+    edges are simply masked (zero) — no radiation condition is applied.
     """
 
     def __init__(
@@ -50,13 +53,24 @@ class ShallowWaterSolver:
         advection: bool = False,
         rho: float = RHO_SEAWATER,
         h_min: float = H_MIN,
+        use_numba: bool | None = None,
     ):
+        """
+        Parameters
+        ----------
+        use_numba : bool or None
+            ``True``/``False`` force the numba-JIT kernel on/off.  ``None``
+            (default) auto-enables it when numba is importable and the run
+            uses the plain physics (``ah == 0`` and no advection), falling
+            back to the vectorised NumPy path otherwise.
+        """
         self.grid = grid
         self.cd = cd
         self.ah = ah
         self.advection = advection
         self.rho = rho
         self.h_min = h_min
+        self.use_numba = use_numba
 
         self.ny, self.nx = grid.shape
         self.dx = grid.dx
@@ -72,7 +86,7 @@ class ShallowWaterSolver:
         self._t: float = 0.0
         self._step_count: int = 0
         self._eta_bc: Callable[[float], np.ndarray] | None = None
-        self._tidal_bnd = None
+        self._tidal_bnd: TidalBoundary | None = None
 
     @property
     def time(self) -> float:
@@ -98,9 +112,7 @@ class ShallowWaterSolver:
             self.v[:] = 0.0
         self._apply_masks()
 
-    def set_open_boundary_eta(
-        self, bc: Union["Callable[[float], np.ndarray]", object]
-    ):
+    def set_open_boundary_eta(self, bc: Callable[[float], np.ndarray] | TidalBoundary):
         """Register boundary forcing — either a callable f(t_seconds)->eta[ny,nx]
         or a :class:`TidalBoundary` object."""
         if callable(bc):
@@ -109,6 +121,14 @@ class ShallowWaterSolver:
         else:
             self._eta_bc = None
             self._tidal_bnd = bc
+
+    def _use_jit_kernel(self) -> bool:
+        """Whether the fused numba kernel should handle this step."""
+        if self.ah > 0.0 or self.advection:
+            return False
+        if self.use_numba is not None:
+            return self.use_numba and numba_available()
+        return numba_available()
 
     def step(self, dt: float):
         """Advance one time step of size dt [s].
@@ -122,6 +142,30 @@ class ShallowWaterSolver:
 
         if self._eta_bc is not None or self._tidal_bnd is not None:
             self._apply_eta_bc()
+
+        if self._use_jit_kernel():
+            # Fused numba kernel (mirrors the NumPy path below exactly).
+            _step_forward_backward(
+                self.eta,
+                self.u,
+                self.v,
+                self.grid.h,
+                self.f_u,
+                self.f_v,
+                self.grid.mask,
+                self.grid.mask_u,
+                self.grid.mask_v,
+                self.grid.open_boundary,
+                self.cd,
+                G,
+                self.dx,
+                self.dy,
+                dt,
+                self.h_min,
+            )
+            self._t += dt
+            self._step_count += 1
+            return
 
         h_c = np.maximum(self.grid.h + self.eta, self.h_min)
         mask = self.grid.mask
@@ -171,8 +215,6 @@ class ShallowWaterSolver:
         )
         self.v[~mask_v] = 0.0
 
-        self._apply_uv_open_bc()
-
         # ---- continuity (η update) ----
         flx_x = h_u[:, 1:] * self.u[:, 1:] - h_u[:, :-1] * self.u[:, :-1]
         flx_y = h_v[1:, :] * self.v[1:, :] - h_v[:-1, :] * self.v[:-1, :]
@@ -221,7 +263,9 @@ class ShallowWaterSolver:
                 elapsed = time_module.monotonic() - t0_wall
                 pct = 100.0 * self._t / duration
                 _active = self.grid.mask
-                eta_max = float(np.max(np.abs(self.eta[_active]))) if _active.any() else 0.0
+                eta_max = (
+                    float(np.max(np.abs(self.eta[_active]))) if _active.any() else 0.0
+                )
                 spd = speed(self.u, self.v)
                 u_max = float(np.max(spd[_active])) if _active.any() else 0.0
                 logger.info(
@@ -265,22 +309,6 @@ class ShallowWaterSolver:
         elif self._tidal_bnd is not None:
             self.eta[ob] = self._tidal_bnd.evaluate_at(self._t)
 
-    def _apply_uv_open_bc(self):
-        zero_gradient = False
-        if zero_gradient:
-            ob_c = self.grid.open_boundary
-            ny, nx = self.ny, self.nx
-            for j in range(ny):
-                if ob_c[j, 0]:
-                    self.u[j, 0] = self.u[j, 1]
-                if ob_c[j, nx - 1]:
-                    self.u[j, nx] = self.u[j, nx - 1]
-            for i in range(nx):
-                if ob_c[0, i]:
-                    self.v[0, i] = self.v[1, i]
-                if ob_c[ny - 1, i]:
-                    self.v[ny, i] = self.v[ny - 1, i]
-
     @staticmethod
     def _laplacian(phi: np.ndarray, dx: float, dy: float) -> np.ndarray:
         """Central-difference Laplacian at interior points.
@@ -316,9 +344,9 @@ class ShallowWaterSolver:
 
         dudy = np.zeros_like(self.u)
         if ny >= 3:
-            dudy[1 : ny - 1, :] = (
-                self.u[2:ny, :] - self.u[: ny - 2, :]
-            ) / (2.0 * self.dy)
+            dudy[1 : ny - 1, :] = (self.u[2:ny, :] - self.u[: ny - 2, :]) / (
+                2.0 * self.dy
+            )
 
         adv = -(self.u * dudx + v_at_u * dudy)
         return adv
@@ -339,9 +367,9 @@ class ShallowWaterSolver:
 
         dvdx = np.zeros_like(self.v)
         if nx >= 3:
-            dvdx[:, 1 : nx - 1] = (
-                self.v[:, 2:nx] - self.v[:, : nx - 2]
-            ) / (2.0 * self.dx)
+            dvdx[:, 1 : nx - 1] = (self.v[:, 2:nx] - self.v[:, : nx - 2]) / (
+                2.0 * self.dx
+            )
 
         adv = -(u_at_v * dvdx + self.v * dvdy)
         return adv

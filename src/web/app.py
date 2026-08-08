@@ -10,11 +10,9 @@ Serves:
 from __future__ import annotations
 
 import io
-import json
 import logging
 import os
-import struct
-from pathlib import Path
+from functools import lru_cache
 
 import numpy as np
 from flask import Flask, jsonify, request, send_file, send_from_directory
@@ -24,7 +22,9 @@ logger = logging.getLogger(__name__)
 _WEB_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(_WEB_DIR, "static")
 OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "/output")
-GEOTIFF_PATH = os.path.abspath(os.environ.get("GEOTIFF_PATH", os.path.join(OUTPUT_DIR, "tidal_power_density.tif")))
+GEOTIFF_PATH = os.path.abspath(
+    os.environ.get("GEOTIFF_PATH", os.path.join(OUTPUT_DIR, "tidal_power_density.tif"))
+)
 
 app = Flask(__name__, static_folder=STATIC_DIR, static_url_path="")
 
@@ -43,6 +43,29 @@ def _open_raster():
         logger.warning("GeoTIFF not found: %s", GEOTIFF_PATH)
         return None
     return rasterio.open(GEOTIFF_PATH)
+
+
+def _geotiff_mtime() -> float:
+    """Modification time of the GeoTIFF (cache-invalidation key)."""
+    try:
+        return os.path.getmtime(GEOTIFF_PATH)
+    except OSError:
+        return -1.0
+
+
+@lru_cache(maxsize=512)
+def _render_tile_cached(z: int, x: int, y: int, mtime: float) -> bytes | None:
+    """Render a tile to PNG bytes, cached keyed on (z, x, y, file mtime)."""
+    src = _open_raster()
+    if src is None:
+        return None
+    try:
+        buf = _render_tile(src, z, x, y)
+    finally:
+        src.close()
+    if buf is None:
+        return None
+    return buf.getvalue()
 
 
 def _render_tile(src, z: int, x: int, y: int) -> io.BytesIO | None:
@@ -65,19 +88,14 @@ def _render_tile(src, z: int, x: int, y: int) -> io.BytesIO | None:
         logger.error("Pillow not installed")
         return None
 
-    import rasterio
     from rasterio.warp import transform_bounds
-
-    tms_y = (1 << z) - 1 - y
 
     west = x / (1 << z) * 360.0 - 180.0
     east = (x + 1) / (1 << z) * 360.0 - 180.0
     north = _mercator_to_lat(np.pi * (1.0 - 2.0 * y / (1 << z)))
     south = _mercator_to_lat(np.pi * (1.0 - 2.0 * (y + 1) / (1 << z)))
 
-    bbox_src_crs = transform_bounds(
-        "EPSG:4326", src.crs, west, south, east, north
-    )
+    bbox_src_crs = transform_bounds("EPSG:4326", src.crs, west, south, east, north)
     window = src.window(*bbox_src_crs)
 
     if window.width < 1 or window.height < 1:
@@ -97,36 +115,41 @@ def _render_tile(src, z: int, x: int, y: int) -> io.BytesIO | None:
     return buf
 
 
-def _apply_colormap(
-    data: np.ndarray, nodata: float | None
-) -> np.ndarray:
+def _apply_colormap(data: np.ndarray, nodata: float | None) -> np.ndarray:
     """Map a power-density array (W/m²) to RGBA using a perceptually
     uniform diverging colormap (blue → cyan → yellow → red).
 
+    Invalid cells (NaN / nodata) are made fully transparent.
     Returns uint8 array of shape (height, width, 4).
     """
+    is_masked = np.ma.is_masked(data)
+    raw = np.asarray(data)
+    invalid = np.isnan(raw) if not is_masked else np.ma.getmaskarray(data)
+    if nodata is not None:
+        invalid |= raw == nodata
+
+    values = np.where(invalid, 0.0, raw)
     vmin, vmax = 0.0, 2000.0
-    data = np.clip((data - vmin) / (vmax - vmin), 0.0, 1.0)
+    t = np.clip((values - vmin) / (vmax - vmin), 0.0, 1.0)
 
-    cmap_stops = np.array([
-        [0.0,  0.0,   0.0,   0.6,   1.0],   # transparent dark blue
-        [0.1,  0.0,   0.3,   0.8,   1.0],   # blue
-        [0.3,  0.0,   0.7,   0.8,   1.0],   # cyan
-        [0.5,  0.0,   0.9,   0.5,   1.0],   # green
-        [0.7,  0.9,   0.8,   0.0,   1.0],   # yellow
-        [0.9,  1.0,   0.4,   0.0,   1.0],   # orange
-        [1.0,  1.0,   0.0,   0.0,   1.0],   # red
-    ])
+    cmap_stops = np.array(
+        [
+            [0.0, 0.0, 0.0, 0.6, 1.0],  # transparent dark blue
+            [0.1, 0.0, 0.3, 0.8, 1.0],  # blue
+            [0.3, 0.0, 0.7, 0.8, 1.0],  # cyan
+            [0.5, 0.0, 0.9, 0.5, 1.0],  # green
+            [0.7, 0.9, 0.8, 0.0, 1.0],  # yellow
+            [0.9, 1.0, 0.4, 0.0, 1.0],  # orange
+            [1.0, 1.0, 0.0, 0.0, 1.0],  # red
+        ]
+    )
 
-    rgba = np.zeros((*data.shape, 4), dtype=np.uint8)
+    rgba = np.zeros((*t.shape, 4), dtype=np.uint8)
     for k in range(4):
-        interp = np.interp(data, cmap_stops[:, 0], cmap_stops[:, k + 1])
+        interp = np.interp(t, cmap_stops[:, 0], cmap_stops[:, k + 1])
         rgba[..., k] = (interp * 255).astype(np.uint8)
 
-    if nodata is not None:
-        is_nodata = np.ma.getmaskarray(data) if np.ma.is_masked(data) else np.zeros_like(data, dtype=bool)
-        rgba[is_nodata, 3] = 0
-
+    rgba[invalid, 3] = 0
     return rgba
 
 
@@ -139,17 +162,26 @@ def _parse_path_geotiff() -> dict:
     src = _open_raster()
     if src is None:
         return {"available": False, "geotiff_path": GEOTIFF_PATH}
-    from rasterio.warp import transform_bounds
+    try:
+        from rasterio.warp import transform_bounds
 
-    bounds = src.bounds
-    # Transform bounds to EPSG:4326 for the frontend
-    if src.crs is not None and src.crs.to_epsg() != 4326:
-        bbox_4326 = transform_bounds(src.crs, "EPSG:4326", bounds.left, bounds.bottom, bounds.right, bounds.top)
-    else:
-        bbox_4326 = (bounds.left, bounds.bottom, bounds.right, bounds.top)
+        bounds = src.bounds
+        # Transform bounds to EPSG:4326 for the frontend
+        if src.crs is not None and src.crs.to_epsg() != 4326:
+            bbox_4326 = transform_bounds(
+                src.crs,
+                "EPSG:4326",
+                bounds.left,
+                bounds.bottom,
+                bounds.right,
+                bounds.top,
+            )
+        else:
+            bbox_4326 = (bounds.left, bounds.bottom, bounds.right, bounds.top)
 
-    stats = _raster_stats(src)
-    src.close()
+        stats = _raster_stats(src)
+    finally:
+        src.close()
     return {
         "available": True,
         "path": GEOTIFF_PATH,
@@ -186,30 +218,33 @@ def _point_query(lat: float, lon: float) -> dict | None:
     if src is None:
         return None
 
-    from rasterio.transform import rowcol
-    from rasterio.warp import transform
-
     try:
-        if src.crs is not None and src.crs.to_epsg() != 4326:
-            x, y = transform("EPSG:4326", src.crs, [lon], [lat])
-            row, col = rowcol(src.transform, x[0], y[0])
-        else:
-            row, col = rowcol(src.transform, lon, lat)
-    except Exception:
-        return None
+        from rasterio.transform import rowcol
+        from rasterio.warp import transform
 
-    if not (0 <= row < src.height and 0 <= col < src.width):
-        return None
+        try:
+            if src.crs is not None and src.crs.to_epsg() != 4326:
+                x, y = transform("EPSG:4326", src.crs, [lon], [lat])
+                row, col = rowcol(src.transform, x[0], y[0])
+            else:
+                row, col = rowcol(src.transform, lon, lat)
+        except Exception:
+            return None
 
-    value = src.read(1, window=((row, row + 1), (col, col + 1)))
-    if value.size == 0:
-        return None
+        if not (0 <= row < src.height and 0 <= col < src.width):
+            return None
 
-    v = float(value[0, 0])
-    if src.nodata is not None and v == src.nodata:
-        return None
-    if np.isnan(v):
-        return None
+        value = src.read(1, window=((row, row + 1), (col, col + 1)))
+        if value.size == 0:
+            return None
+
+        v = float(value[0, 0])
+        if src.nodata is not None and v == src.nodata:
+            return None
+        if np.isnan(v):
+            return None
+    finally:
+        src.close()
 
     return {"lat": lat, "lon": lon, "power_density_Wm2": round(v, 2)}
 
@@ -224,7 +259,9 @@ def index():
 
 @app.route("/api/metadata")
 def metadata():
-    return jsonify(_parse_path_geotiff())
+    resp = jsonify(_parse_path_geotiff())
+    resp.headers["Cache-Control"] = "public, max-age=300"
+    return resp
 
 
 @app.route("/api/query")
@@ -247,22 +284,26 @@ def query():
 
 @app.route("/api/tiles/<int:z>/<int:x>/<int:y>.png")
 def tile(z: int, x: int, y: int):
-    if z > MAX_TILE_ZOOM:
+    if z < 0 or z > MAX_TILE_ZOOM:
         return "", 204
-
-    src = _open_raster()
-    if src is None:
-        return "", 404
+    n = 1 << z
+    if not (0 <= x < n and 0 <= y < n):
+        return jsonify({"error": "tile out of range"}), 404
+    if not os.path.isfile(GEOTIFF_PATH):
+        return jsonify({"error": "GeoTIFF not yet generated"}), 404
 
     try:
-        buf = _render_tile(src, z, x, y)
-    finally:
-        src.close()
+        tile_bytes = _render_tile_cached(z, x, y, _geotiff_mtime())
+    except Exception as exc:
+        logger.exception("Tile render failed (z=%d x=%d y=%d): %s", z, x, y, exc)
+        return jsonify({"error": "tile render failed"}), 500
 
-    if buf is None:
+    if tile_bytes is None:
         return "", 204
 
-    return send_file(buf, mimetype="image/png")
+    resp = send_file(io.BytesIO(tile_bytes), mimetype="image/png")
+    resp.headers["Cache-Control"] = "public, max-age=86400"
+    return resp
 
 
 @app.route("/api/download/tidal_power_density.tif")

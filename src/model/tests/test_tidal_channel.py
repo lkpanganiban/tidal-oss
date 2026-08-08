@@ -7,6 +7,7 @@ the right boundary is a closed wall.  Validates:
 """
 
 import warnings
+
 warnings.filterwarnings(
     "ignore", message="numpy.ndarray size changed, may indicate binary incompatibility"
 )
@@ -18,23 +19,21 @@ try:
 except ImportError:
     pytest = None  # type: ignore[assignment]
 
+from model.forcing import ASTRO_FREQUENCIES
 from model.grid import StructuredGrid
 from model.solver import ShallowWaterSolver
-from model.forcing import ASTRO_FREQUENCIES
 
 
 def test_tidal_channel_develops_flow():
     """An M2-forced channel should develop an oscillating flow."""
-    L = 50000.0   # channel length [m]
-    H = 30.0      # depth [m]
+    L = 50000.0  # channel length [m]
+    H = 30.0  # depth [m]
     nx = 60
     ny = 3
     dx = L / nx
     dy = dx
 
-    grid = StructuredGrid.from_uniform(
-        nx=nx, ny=ny, dx=dx, dy=dy, lat0=0.0
-    )
+    grid = StructuredGrid.from_uniform(nx=nx, ny=ny, dx=dx, dy=dy, lat0=0.0)
     grid.h[:, :] = H
     grid.h_u[:] = H
     grid.h_v[:] = H
@@ -42,7 +41,7 @@ def test_tidal_channel_develops_flow():
     grid.mask_u[:] = True
     grid.mask_v[:] = True
     grid.open_boundary[:] = False
-    grid.open_boundary[:, 0] = True   # left boundary open (forced)
+    grid.open_boundary[:, 0] = True  # left boundary open (forced)
     grid.f[:] = 0.0
 
     amp = 0.5
@@ -80,16 +79,14 @@ def test_tidal_channel_phase():
     dx = L / nx
     dy = dx
 
-    grid = StructuredGrid.from_uniform(
-        nx=nx, ny=ny, dx=dx, dy=dy, lat0=0.0
-    )
+    grid = StructuredGrid.from_uniform(nx=nx, ny=ny, dx=dx, dy=dy, lat0=0.0)
     grid.h[:, :] = H
     grid.h_u[:] = H
     grid.h_v[:] = H
     grid.mask[:] = True
     grid.mask_u[:] = True
     grid.mask_v[:] = True
-    grid.open_boundary[:, 0] = True   # left boundary open (forced)
+    grid.open_boundary[:, 0] = True  # left boundary open (forced)
     grid.f[:] = 0.0
 
     amp = 0.3
@@ -138,4 +135,6 @@ def test_tidal_channel_phase():
     dt_avg = np.mean(np.diff(t_period))
     phase_shift = peak_lag * omega * dt_avg
 
-    assert -np.pi / 2 < phase_shift < np.pi, f"Unexpected phase shift: {phase_shift:.2f} rad"
+    assert -np.pi / 2 < phase_shift < np.pi, (
+        f"Unexpected phase shift: {phase_shift:.2f} rad"
+    )

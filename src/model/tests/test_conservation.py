@@ -1,6 +1,7 @@
 """Test: mass and energy conservation in the solver."""
 
 import warnings
+
 warnings.filterwarnings(
     "ignore", message="numpy.ndarray size changed, may indicate binary incompatibility"
 )
@@ -23,9 +24,7 @@ def test_mass_conservation_closed_basin():
     dx = 1000.0
     dy = 1000.0
 
-    grid = StructuredGrid.from_uniform(
-        nx=nx, ny=ny, dx=dx, dy=dy, lat0=0.0
-    )
+    grid = StructuredGrid.from_uniform(nx=nx, ny=ny, dx=dx, dy=dy, lat0=0.0)
 
     depth = 50.0
     grid.h[:, :] = depth
@@ -65,7 +64,7 @@ def test_mass_conservation_closed_basin():
     rel_diff = abs(vol1 - vol0) / vol0
     assert rel_diff < 0.01, (
         f"Mass conservation violated: initial={vol0:.3e}, final={vol1:.3e}, "
-        f"diff={rel_diff*100:.4f}%"
+        f"diff={rel_diff * 100:.4f}%"
     )
 
 
@@ -76,9 +75,7 @@ def test_mass_conservation_with_friction():
     dx = 500.0
     dy = 500.0
 
-    grid = StructuredGrid.from_uniform(
-        nx=nx, ny=ny, dx=dx, dy=dy, lat0=0.0
-    )
+    grid = StructuredGrid.from_uniform(nx=nx, ny=ny, dx=dx, dy=dy, lat0=0.0)
     grid.h[:, :] = 40.0
     grid.h_u[:] = 40.0
     grid.h_v[:] = 40.0
@@ -108,9 +105,7 @@ def test_mass_conservation_with_friction():
     vol1 = solver.total_volume()
 
     rel_diff = abs(vol1 - vol0) / vol0
-    assert rel_diff < 0.01, (
-        f"Mass drift with friction: {rel_diff*100:.4f}%"
-    )
+    assert rel_diff < 0.01, f"Mass drift with friction: {rel_diff * 100:.4f}%"
 
 
 def test_power_density_nonnegative():
@@ -120,9 +115,7 @@ def test_power_density_nonnegative():
     dx = 1000.0
     dy = 1000.0
 
-    grid = StructuredGrid.from_uniform(
-        nx=nx, ny=ny, dx=dx, dy=dy, lat0=0.0
-    )
+    grid = StructuredGrid.from_uniform(nx=nx, ny=ny, dx=dx, dy=dy, lat0=0.0)
     grid.h[:, :] = 30.0
     grid.h_u[:] = 30.0
     grid.h_v[:] = 30.0

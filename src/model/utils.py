@@ -4,7 +4,17 @@ Provides Coriolis parameter, stability criteria, array indexing helpers,
 and interpolation routines used across the model package.
 """
 
+from typing import overload
+
 import numpy as np
+
+
+@overload
+def coriolis(lat: np.ndarray) -> np.ndarray: ...
+
+
+@overload
+def coriolis(lat: float) -> float: ...
 
 
 def coriolis(lat: np.ndarray | float) -> np.ndarray | float:
@@ -49,19 +59,6 @@ def cfl_timestep(dx: float, dy: float, h_max: float, safety: float = 0.5) -> flo
     return safety * dx_eff / c_max
 
 
-def adams_bashforth3(
-    f_n: np.ndarray,
-    f_nm1: np.ndarray,
-    f_nm2: np.ndarray,
-) -> np.ndarray:
-    """Third-order Adams-Bashforth extrapolation.
-
-    Returns the AB3 estimate of the integral of f over one time step:
-        f_AB3 = 23/12 * f_n - 16/12 * f_nm1 + 5/12 * f_nm2
-    """
-    return (23.0 * f_n - 16.0 * f_nm1 + 5.0 * f_nm2) / 12.0
-
-
 def interpolate_to_u(phi: np.ndarray) -> np.ndarray:
     """Interpolate a cell-centre field to u-points (x-direction faces).
 
@@ -97,9 +94,7 @@ def v_at_u_pts(v: np.ndarray) -> np.ndarray:
     """
     ny, nx = v.shape[0] - 1, v.shape[1]
     result = np.zeros((ny, nx + 1), dtype=v.dtype)
-    result[:, 1:nx] = 0.25 * (
-        v[:-1, 1:] + v[:-1, :-1] + v[1:, 1:] + v[1:, :-1]
-    )
+    result[:, 1:nx] = 0.25 * (v[:-1, 1:] + v[:-1, :-1] + v[1:, 1:] + v[1:, :-1])
     result[:, 0] = 0.5 * (v[:-1, 0] + v[1:, 0])
     result[:, nx] = 0.5 * (v[:-1, nx - 1] + v[1:, nx - 1])
     return result
@@ -112,9 +107,7 @@ def u_at_v_pts(u: np.ndarray) -> np.ndarray:
     """
     ny, nx = u.shape[0], u.shape[1] - 1
     result = np.zeros((ny + 1, nx), dtype=u.dtype)
-    result[1:ny, :] = 0.25 * (
-        u[1:, :-1] + u[1:, 1:] + u[:-1, :-1] + u[:-1, 1:]
-    )
+    result[1:ny, :] = 0.25 * (u[1:, :-1] + u[1:, 1:] + u[:-1, :-1] + u[:-1, 1:])
     result[0, :] = 0.5 * (u[0, :-1] + u[0, 1:])
     result[ny, :] = 0.5 * (u[ny - 1, :-1] + u[ny - 1, 1:])
     return result
@@ -147,19 +140,3 @@ def power_density(u: np.ndarray, v: np.ndarray, rho: float = 1025.0) -> np.ndarr
     """
     s = speed(u, v)
     return 0.5 * rho * s**3
-
-
-def normalise_angle(radians: np.ndarray) -> np.ndarray:
-    """Normalise angles to [-pi, pi]."""
-    return np.arctan2(np.sin(radians), np.cos(radians))
-
-
-def rotate_vector(
-    u: np.ndarray, v: np.ndarray, angle_rad: float
-) -> tuple[np.ndarray, np.ndarray]:
-    """Rotate a 2D vector field by angle_rad anticlockwise."""
-    cos_a = np.cos(angle_rad)
-    sin_a = np.sin(angle_rad)
-    u_rot = cos_a * u - sin_a * v
-    v_rot = sin_a * u + cos_a * v
-    return u_rot, v_rot

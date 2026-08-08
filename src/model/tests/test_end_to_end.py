@@ -6,6 +6,7 @@ All tests use synthetic data so no external datasets are required.
 """
 
 import warnings
+
 warnings.filterwarnings(
     "ignore", message="numpy.ndarray size changed, may indicate binary incompatibility"
 )
@@ -22,30 +23,31 @@ try:
 except ImportError:
     pytest = None  # type: ignore[assignment]
 
-from model.bathymetry import load_gebco, regrid_bathymetry, elevation_to_depth
+from model.bathymetry import elevation_to_depth, load_gebco, regrid_bathymetry
 from model.forcing import (
     ASTRO_FREQUENCIES,
     TidalConstituent,
-    TidalBoundary,
-    make_synthetic_tidal_boundary,
     build_tidal_boundary,
+    make_synthetic_tidal_boundary,
 )
 from model.grid import StructuredGrid
 from model.output import (
     create_results_dataset,
-    write_netcdf,
-    write_mean_power_geotiff,
     write_hotspots_geojson,
+    write_mean_power_geotiff,
+    write_netcdf,
 )
-from model.solver import ShallowWaterSolver, G, RHO_SEAWATER
-from model.utils import cfl_timestep, speed, power_density
-
+from model.solver import ShallowWaterSolver
+from model.utils import cfl_timestep, power_density, speed
 
 # ---------------------------------------------------------------------------
 # Helper: build a tiny degree-grid domain suitable for GeoTIFF output
 # ---------------------------------------------------------------------------
 
-def _tiny_degree_grid(nx: int = 12, ny: int = 10, depth: float = 40.0) -> StructuredGrid:
+
+def _tiny_degree_grid(
+    nx: int = 12, ny: int = 10, depth: float = 40.0
+) -> StructuredGrid:
     """A small rectangular domain in lat/lon space (~2°×2° box)."""
     lon_1d = np.linspace(120.0, 122.0, nx)
     lat_1d = np.linspace(10.0, 12.0, ny)
@@ -56,6 +58,7 @@ def _tiny_degree_grid(nx: int = 12, ny: int = 10, depth: float = 40.0) -> Struct
 # ---------------------------------------------------------------------------
 # 1. Bathymetry pipeline — synthetic GEBCO → regrid → grid
 # ---------------------------------------------------------------------------
+
 
 def test_bathymetry_pipeline_end_to_end():
     """Create a synthetic GEBCO NetCDF on disk, load it, regrid, and build a grid.
@@ -83,8 +86,9 @@ def test_bathymetry_pipeline_end_to_end():
     ds.close()
 
     # 1) load_gebco — clip to a sub-region
-    lon, lat, elev = load_gebco(nc_path, lon_min=119.0, lon_max=123.0,
-                                lat_min=9.0, lat_max=13.0)
+    lon, lat, elev = load_gebco(
+        nc_path, lon_min=119.0, lon_max=123.0, lat_min=9.0, lat_max=13.0
+    )
     assert len(lon) >= 10, f"too few lon points: {len(lon)}"
     assert len(lat) >= 10, f"too few lat points: {len(lat)}"
     assert elev.shape == (len(lat), len(lon)), f"shape mismatch: {elev.shape}"
@@ -112,13 +116,16 @@ def test_bathymetry_pipeline_end_to_end():
     assert grid.open_boundary.any(), "no open-boundary cells"
     # open boundaries only on the perimeter
     ob = grid.open_boundary
-    interior = ob[1:-1, 1:-1] if grid.ny > 2 and grid.nx > 2 else np.array([], dtype=bool)
+    interior = (
+        ob[1:-1, 1:-1] if grid.ny > 2 and grid.nx > 2 else np.array([], dtype=bool)
+    )
     assert not interior.any(), "open-boundary cells found in interior"
 
 
 # ---------------------------------------------------------------------------
 # 2. Forcing pipeline — synthetic constituents → TidalBoundary → evaluate
 # ---------------------------------------------------------------------------
+
 
 def test_forcing_pipeline_end_to_end():
     """Build a TidalBoundary from synthetic constituents and evaluate a time series.
@@ -132,14 +139,20 @@ def test_forcing_pipeline_end_to_end():
 
     # Create constituents with different amplitudes per constituent
     c1 = TidalConstituent(
-        name="M2", amplitude=np.full(n_bnd, 0.5),
-        phase=np.zeros(n_bnd), omega=ASTRO_FREQUENCIES["M2"],
-        lon=grid.lon[grid.open_boundary], lat=grid.lat[grid.open_boundary],
+        name="M2",
+        amplitude=np.full(n_bnd, 0.5),
+        phase=np.zeros(n_bnd),
+        omega=ASTRO_FREQUENCIES["M2"],
+        lon=grid.lon[grid.open_boundary],
+        lat=grid.lat[grid.open_boundary],
     )
     c2 = TidalConstituent(
-        name="S2", amplitude=np.full(n_bnd, 0.15),
-        phase=np.full(n_bnd, np.pi / 4), omega=ASTRO_FREQUENCIES["S2"],
-        lon=grid.lon[grid.open_boundary], lat=grid.lat[grid.open_boundary],
+        name="S2",
+        amplitude=np.full(n_bnd, 0.15),
+        phase=np.full(n_bnd, np.pi / 4),
+        omega=ASTRO_FREQUENCIES["S2"],
+        lon=grid.lon[grid.open_boundary],
+        lat=grid.lat[grid.open_boundary],
     )
 
     bnd = build_tidal_boundary([c1, c2])
@@ -163,11 +176,14 @@ def test_forcing_pipeline_end_to_end():
     amps_sum = 0.5 + 0.15
     assert np.all(np.abs(eta_multi) <= amps_sum + 1e-6), "η exceeded amplitude sum"
     # Should vary over time (M2+S2 produces modulation)
-    assert np.max(eta_multi[:, 0]) - np.min(eta_multi[:, 0]) > 0.01, "time series too flat"
+    assert np.max(eta_multi[:, 0]) - np.min(eta_multi[:, 0]) > 0.01, (
+        "time series too flat"
+    )
 
     # ----- make_synthetic_tidal_boundary convenience path -----
-    synth = make_synthetic_tidal_boundary(n_bnd, amplitude=0.8,
-                                          constituents=["M2", "S2", "K1", "O1"])
+    synth = make_synthetic_tidal_boundary(
+        n_bnd, amplitude=0.8, constituents=["M2", "S2", "K1", "O1"]
+    )
     assert synth.n_boundary_cells == n_bnd
     assert len(synth.names) == 4
     eta_synth = synth.evaluate_at(0.0)
@@ -180,6 +196,7 @@ def test_forcing_pipeline_end_to_end():
 # 3. Full simulation — grid → solver → snapshots → mass check
 # ---------------------------------------------------------------------------
 
+
 def test_full_simulation_pipeline():
     """Build a degree-grid domain, force with synthetic M2, run 2 periods,
     collect snapshots, and verify mass conservation and power properties.
@@ -187,12 +204,15 @@ def test_full_simulation_pipeline():
     This is the closest test to a `run.py` production run.
     """
     grid = _tiny_degree_grid(nx=14, ny=12, depth=50.0)
-    assert grid.open_boundary.sum() >= 4, "too few open-boundary cells for a realistic run"
+    assert grid.open_boundary.sum() >= 4, (
+        "too few open-boundary cells for a realistic run"
+    )
 
     # Synthetic M2+S2 forcing
     n_bnd = int(grid.open_boundary.sum())
-    tide = make_synthetic_tidal_boundary(n_bnd, amplitude=0.5,
-                                         constituents=["M2", "S2"])
+    tide = make_synthetic_tidal_boundary(
+        n_bnd, amplitude=0.5, constituents=["M2", "S2"]
+    )
 
     solver = ShallowWaterSolver(grid, cd=0.0025, ah=0.0, advection=False, rho=1025.0)
     solver.set_open_boundary_eta(tide)
@@ -210,13 +230,15 @@ def test_full_simulation_pipeline():
     def cb(solv, step_n):
         # Collect every ~600 steps (≈ 2.5 h real time) — gives ~4 snapshots
         if step_n % 600 == 0:
-            snapshots.append({
-                "t": solv.time,
-                "eta": solv.eta.copy(),
-                "u": solv.u.copy(),
-                "v": solv.v.copy(),
-                "power": solv.compute_power_density(),
-            })
+            snapshots.append(
+                {
+                    "t": solv.time,
+                    "eta": solv.eta.copy(),
+                    "u": solv.u.copy(),
+                    "v": solv.v.copy(),
+                    "power": solv.compute_power_density(),
+                }
+            )
         return None
 
     solver.run(dt=dt, duration=duration, callback=cb, progress_interval=duration)
@@ -258,6 +280,7 @@ def test_full_simulation_pipeline():
 # 4. Output pipeline — NetCDF, GeoTIFF, GeoJSON
 # ---------------------------------------------------------------------------
 
+
 def test_output_netcdf_roundtrip():
     """Write a results Dataset to NetCDF and read it back.
 
@@ -271,11 +294,23 @@ def test_output_netcdf_roundtrip():
     times = np.arange(nt) * 600.0
 
     # Fake a short time series
-    eta = 0.3 * np.sin(np.linspace(0, 4 * np.pi, nt))[:, None, None] * np.ones((nt, ny, nx))
-    u = 0.2 * np.cos(np.linspace(0, 4 * np.pi, nt))[:, None, None] * np.ones((nt, ny, nx + 1))
-    v = 0.1 * np.sin(np.linspace(0, 4 * np.pi, nt))[:, None, None] * np.ones((nt, ny + 1, nx))
+    eta = (
+        0.3
+        * np.sin(np.linspace(0, 4 * np.pi, nt))[:, None, None]
+        * np.ones((nt, ny, nx))
+    )
+    u = (
+        0.2
+        * np.cos(np.linspace(0, 4 * np.pi, nt))[:, None, None]
+        * np.ones((nt, ny, nx + 1))
+    )
+    v = (
+        0.1
+        * np.sin(np.linspace(0, 4 * np.pi, nt))[:, None, None]
+        * np.ones((nt, ny + 1, nx))
+    )
     spd = np.sqrt(u[:, :, 1:] ** 2 + v[:, 1:, :] ** 2)
-    pwr = 0.5 * 1025.0 * spd ** 3
+    pwr = 0.5 * 1025.0 * spd**3
 
     ds = create_results_dataset(grid, times, eta, u, v, pwr)
 
@@ -327,6 +362,7 @@ def test_output_geotiff_valid():
     assert os.path.isfile(tif_path), f"GeoTIFF not written to {tif_path}"
 
     import rasterio
+
     with rasterio.open(tif_path) as src:
         # CRS must be a recognised coordinate reference system.
         # The COG driver with GoogleMapsCompatible tiling reprojects to
@@ -334,8 +370,9 @@ def test_output_geotiff_valid():
         # EPSG:4326 and EPSG:3857 are valid outcomes.
         assert src.crs is not None, "GeoTIFF has no CRS"
         crs_str = src.crs.to_string().lower()
-        assert "4326" in crs_str or "3857" in crs_str, \
+        assert "4326" in crs_str or "3857" in crs_str, (
             f"unexpected CRS: {crs_str} (expected EPSG:4326 or EPSG:3857)"
+        )
 
         # The COG driver may add overview bands, tile-pad, or reproject
         # (GoogleMapsCompatible → EPSG:3857).  The key assertions are
@@ -343,7 +380,7 @@ def test_output_geotiff_valid():
         assert src.count >= 1, "GeoTIFF has no bands"
         data = src.read(1)
         assert data.size > 0, "GeoTIFF band 1 is empty"
-        assert data.dtype == 'float32', f"expected float32, got {data.dtype}"
+        assert data.dtype == "float32", f"expected float32, got {data.dtype}"
 
         # At least one cell should have non-zero power
         assert np.any(data > 0), "all power values are zero or negative"
@@ -351,8 +388,9 @@ def test_output_geotiff_valid():
         # A band description should be set on band 1
         desc = src.descriptions[0]
         if desc is not None:
-            assert "power" in desc.lower() or "W/m" in desc, \
+            assert "power" in desc.lower() or "W/m" in desc, (
                 f"unexpected band description: {desc}"
+            )
 
 
 def test_output_geojson_hotspots():
@@ -389,8 +427,9 @@ def test_output_geojson_hotspots():
         props = feat["properties"]
         assert "power_density_Wm2" in props
         assert "depth_m" in props
-        assert props["power_density_Wm2"] >= threshold, \
+        assert props["power_density_Wm2"] >= threshold, (
             f"feature below threshold: {props['power_density_Wm2']}"
+        )
 
     # Cell at power_mean[3,4] = 180 should NOT appear (below threshold)
     all_powers = [f["properties"]["power_density_Wm2"] for f in features]
@@ -407,6 +446,7 @@ def test_output_geojson_hotspots():
 # 5. CFL auto-computation
 # ---------------------------------------------------------------------------
 
+
 def test_cfl_auto_computation_sensible():
     """CFL time steps should be reasonable for typical grid/depth combos.
 
@@ -414,10 +454,10 @@ def test_cfl_auto_computation_sensible():
     finer grid → smaller dt.
     """
     dts = [
-        cfl_timestep(2000.0, 2000.0, 10.0, safety=0.5),     # 2 km, 10 m deep
-        cfl_timestep(2000.0, 2000.0, 200.0, safety=0.5),    # 2 km, 200 m deep
-        cfl_timestep(500.0, 500.0, 50.0, safety=0.5),       # 500 m, 50 m deep
-        cfl_timestep(10000.0, 10000.0, 50.0, safety=0.5),   # 10 km, 50 m deep
+        cfl_timestep(2000.0, 2000.0, 10.0, safety=0.5),  # 2 km, 10 m deep
+        cfl_timestep(2000.0, 2000.0, 200.0, safety=0.5),  # 2 km, 200 m deep
+        cfl_timestep(500.0, 500.0, 50.0, safety=0.5),  # 500 m, 50 m deep
+        cfl_timestep(10000.0, 10000.0, 50.0, safety=0.5),  # 10 km, 50 m deep
     ]
     c1, c2, c3, c4 = dts
 
@@ -438,6 +478,7 @@ def test_cfl_auto_computation_sensible():
 # ---------------------------------------------------------------------------
 # 6. Power density consistency
 # ---------------------------------------------------------------------------
+
 
 def test_power_density_formula_consistency():
     """Power density computed by solver.compute_power_density must match an
@@ -465,8 +506,9 @@ def test_power_density_formula_consistency():
     pd_solver = solver.compute_power_density()
     pd_manual = power_density(solver.u, solver.v, rho=solver.rho)
 
-    assert np.allclose(pd_solver, pd_manual, atol=1e-10), \
+    assert np.allclose(pd_solver, pd_manual, atol=1e-10), (
         f"max diff: {np.max(np.abs(pd_solver - pd_manual)):.2e}"
+    )
 
     # Also check the helper speed() returns non-negative
     spd = speed(solver.u, solver.v)
@@ -476,6 +518,7 @@ def test_power_density_formula_consistency():
 # ---------------------------------------------------------------------------
 # 7. Open-boundary detection in from_bathymetry
 # ---------------------------------------------------------------------------
+
 
 def test_open_boundary_detection():
     """Verify from_bathymetry marks wet perimeter cells as open boundaries,
@@ -489,13 +532,16 @@ def test_open_boundary_detection():
     depth[0, 0] = 0.0  # top-left (south-west) corner is land
     land_mask = depth < 2.0
 
-    grid = StructuredGrid.from_bathymetry(lon, lat, depth, land_mask=land_mask,
-                                          min_depth=2.0)
+    grid = StructuredGrid.from_bathymetry(
+        lon, lat, depth, land_mask=land_mask, min_depth=2.0
+    )
 
     ob = grid.open_boundary
 
     # The dry corner should NOT be an open boundary
-    assert not ob[0, 0], "dry corner cell marked as open boundary — it should be inactive"
+    assert not ob[0, 0], (
+        "dry corner cell marked as open boundary — it should be inactive"
+    )
 
     # Wet perimeter cells SHOULD be open boundaries
     # (Check a wet cell on each edge)
@@ -515,6 +561,7 @@ def test_open_boundary_detection():
 # 8. Config file integrity
 # ---------------------------------------------------------------------------
 
+
 def test_config_file_valid():
     """Verify config.yaml exists, is valid YAML, and has the expected sections."""
     import yaml
@@ -525,7 +572,14 @@ def test_config_file_valid():
     with open(config_path) as f:
         config = yaml.safe_load(f)
 
-    required_sections = ["domain", "bathymetry", "simulation", "tidal_forcing", "output", "logging"]
+    required_sections = [
+        "domain",
+        "bathymetry",
+        "simulation",
+        "tidal_forcing",
+        "output",
+        "logging",
+    ]
     for sec in required_sections:
         assert sec in config, f"missing config section: {sec}"
 
@@ -545,7 +599,16 @@ def test_config_file_valid():
 
     # Tidal forcing
     tf = config["tidal_forcing"]
-    assert tf["source"] in ("synthetic", "fes2014", "fes", "tpxo9", "tpxo", "got", "got4.10c", "got4.10")
+    assert tf["source"] in (
+        "synthetic",
+        "fes2014",
+        "fes",
+        "tpxo9",
+        "tpxo",
+        "got",
+        "got4.10c",
+        "got4.10",
+    )
     assert len(tf.get("constituents", [])) >= 1
 
     # Output
@@ -558,6 +621,7 @@ def test_config_file_valid():
 # 9. Spring–neap modulation visible in M2+S2 time series
 # ---------------------------------------------------------------------------
 
+
 def test_spring_neap_modulation_visible():
     """An M2+S2 time series must show a clear amplitude modulation over 15 days.
 
@@ -565,7 +629,9 @@ def test_spring_neap_modulation_visible():
     harmonic reconstruction — a prerequisite for accurate resource assessment.
     """
     bnd_m2 = make_synthetic_tidal_boundary(1, amplitude=0.5, constituents=["M2"])
-    bnd_m2s2 = make_synthetic_tidal_boundary(1, amplitude=0.5, constituents=["M2", "S2"])
+    bnd_m2s2 = make_synthetic_tidal_boundary(
+        1, amplitude=0.5, constituents=["M2", "S2"]
+    )
 
     # Sample over 30 days at 15-minute resolution
     t_sec = np.arange(0, 30 * 86400, 900, dtype=np.float64)
@@ -581,23 +647,27 @@ def test_spring_neap_modulation_visible():
     # Compute peak amplitude in sliding 12.5 h windows (one M2 period)
     T_samp = 900
     winsize = int(13 * 3600 / T_samp)  # ~13 hours per window
-    amp_envelope = np.array([
-        (np.max(eta_m2s2[i:i + winsize]) - np.min(eta_m2s2[i:i + winsize]))
-        for i in range(0, len(eta_m2s2) - winsize, winsize)
-    ])
+    amp_envelope = np.array(
+        [
+            (np.max(eta_m2s2[i : i + winsize]) - np.min(eta_m2s2[i : i + winsize]))
+            for i in range(0, len(eta_m2s2) - winsize, winsize)
+        ]
+    )
 
     amp_max = np.max(amp_envelope)
     amp_min = np.min(amp_envelope)
     modulation_ratio = amp_min / amp_max
 
     # Spring peaks should be noticeably larger than neap troughs
-    assert modulation_ratio < 0.5, \
+    assert modulation_ratio < 0.5, (
         f"spring–neap modulation too weak: ratio={modulation_ratio:.3f} (expect < 0.5)"
+    )
 
 
 # ---------------------------------------------------------------------------
 # 10. Solver preserves state across run-restart boundary
 # ---------------------------------------------------------------------------
+
 
 def test_solver_restart_consistency():
     """Running step() manually and running run() for the same duration
@@ -647,6 +717,57 @@ def test_solver_restart_consistency():
         sB.step(dt)
 
     # Final states must match
-    assert np.allclose(sA.eta, sB.eta, atol=1e-12), "eta diverged between run() and step()"
+    assert np.allclose(sA.eta, sB.eta, atol=1e-12), (
+        "eta diverged between run() and step()"
+    )
     assert np.allclose(sA.u, sB.u, atol=1e-12), "u diverged between run() and step()"
     assert np.allclose(sA.v, sB.v, atol=1e-12), "v diverged between run() and step()"
+
+
+# ---------------------------------------------------------------------------
+# 11. Numba kernel parity with the vectorised NumPy path
+# ---------------------------------------------------------------------------
+
+
+def test_numba_kernel_parity():
+    """The fused numba kernel must reproduce the NumPy path exactly.
+
+    Both paths are exercised over 300 steps on an M2-forced channel with
+    spatially varying depth; the states must match bit-for-bit.
+    """
+    from model.forcing import make_synthetic_tidal_boundary
+    from model.kernels import numba_available
+
+    if not numba_available():
+        pytest.skip("numba not installed")
+
+    nx, ny = 30, 10
+    grid = StructuredGrid.from_uniform(nx=nx, ny=ny, dx=500.0, dy=500.0, lat0=12.0)
+    grid.h[:] = 25.0
+    grid.h_u[:] = 25.0
+    grid.h_v[:] = 25.0
+    grid.mask[:] = True
+    grid.mask_u[:] = True
+    grid.mask_v[:] = True
+    grid.open_boundary[:, 0] = True
+    grid.open_boundary[:, -1] = True
+
+    tide = make_synthetic_tidal_boundary(
+        int(grid.open_boundary.sum()), amplitude=0.5, constituents=["M2", "S2"]
+    )
+
+    s_np = ShallowWaterSolver(grid, cd=0.0025, use_numba=False)
+    s_np.set_open_boundary_eta(tide)
+    for _ in range(300):
+        s_np.step(10.0)
+
+    s_jit = ShallowWaterSolver(grid, cd=0.0025, use_numba=True)
+    s_jit.set_open_boundary_eta(tide)
+    for _ in range(300):
+        s_jit.step(10.0)
+
+    assert np.array_equal(s_np.eta, s_jit.eta), (
+        "eta differs between numba and NumPy paths"
+    )
+    assert np.array_equal(s_np.u, s_jit.u), "u differs between numba and NumPy paths"
+    assert np.array_equal(s_np.v, s_jit.v), "v differs between numba and NumPy paths"

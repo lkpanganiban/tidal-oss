@@ -9,8 +9,8 @@ Supports:
 from __future__ import annotations
 
 import dataclasses
-import numpy as np
 
+import numpy as np
 
 ASTRO_FREQUENCIES: dict[str, float] = {
     "M2": 2.0 * np.pi / (12.4206012 * 3600.0),
@@ -86,10 +86,50 @@ class TidalBoundary:
         """
         eta = np.zeros(self.n_boundary_cells)
         for k in range(len(self.names)):
-            eta += self.amp[k, :] * np.cos(
-                self.omega[k] * t_seconds + self.phase[k, :]
-            )
+            eta += self.amp[k, :] * np.cos(self.omega[k] * t_seconds + self.phase[k, :])
         return eta
+
+
+def _interp_to_boundary(
+    lat_grid: np.ndarray,
+    lon_grid: np.ndarray,
+    amp_field: np.ndarray,
+    pha_field: np.ndarray,
+    lon_bnd: np.ndarray,
+    lat_bnd: np.ndarray,
+    fill_value: float | None = 0.0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Bilinear-interpolate amplitude & phase grids to boundary points.
+
+    Parameters
+    ----------
+    lat_grid, lon_grid : ndarray
+        1-D source coordinates (in interpolation order).
+    amp_field, pha_field : ndarray
+        Source amplitude [m] and phase [rad] fields.
+    lon_bnd, lat_bnd : ndarray
+        Boundary-cell coordinates to interpolate to.
+    fill_value : float or None
+        Value for out-of-domain points (None = nearest extrapolation).
+
+    Returns
+    -------
+    amp : ndarray
+        Amplitude at boundary points [m].
+    pha : ndarray
+        Phase at boundary points [rad].
+    """
+    from scipy.interpolate import RegularGridInterpolator
+
+    interp_amp = RegularGridInterpolator(
+        (lat_grid, lon_grid), amp_field, bounds_error=False, fill_value=fill_value
+    )
+    interp_pha = RegularGridInterpolator(
+        (lat_grid, lon_grid), pha_field, bounds_error=False, fill_value=fill_value
+    )
+
+    pts = np.column_stack([lat_bnd, lon_bnd])
+    return interp_amp(pts), interp_pha(pts)
 
 
 def read_fes_constituents(
@@ -115,16 +155,14 @@ def read_fes_constituents(
     constituents : list[TidalConstituent]
     """
     import os
+
     import xarray as xr
-    from scipy.interpolate import RegularGridInterpolator
 
     result = []
     for name in constituents:
         amp_file = os.path.join(path, f"{name}_ocean.nc")
         if not os.path.isfile(amp_file):
-            raise FileNotFoundError(
-                f"FES2014 amplitude file not found: {amp_file}"
-            )
+            raise FileNotFoundError(f"FES2014 amplitude file not found: {amp_file}")
 
         ds_amp = xr.open_dataset(amp_file, decode_times=False)
         ds_pha = xr.open_dataset(
@@ -137,16 +175,16 @@ def read_fes_constituents(
         amp_raw = ds_amp["ocean_amplitude"].values
         pha_raw = ds_pha["load_phase"].values
 
-        interp_amp = RegularGridInterpolator(
-            (lat_fes, lon_fes), amp_raw.squeeze(), bounds_error=False
+        amp, pha_deg = _interp_to_boundary(
+            lat_fes,
+            lon_fes,
+            amp_raw.squeeze(),
+            pha_raw.squeeze(),
+            lon_bnd,
+            lat_bnd,
+            fill_value=None,
         )
-        interp_pha = RegularGridInterpolator(
-            (lat_fes, lon_fes), pha_raw.squeeze(), bounds_error=False
-        )
-
-        pts = np.column_stack([lat_bnd, lon_bnd])
-        amp = interp_amp(pts)
-        pha = np.deg2rad(interp_pha(pts))
+        pha = np.deg2rad(pha_deg)
 
         omega = ASTRO_FREQUENCIES.get(name)
         if omega is None:
@@ -233,16 +271,14 @@ def read_got_constituents(
     list[TidalConstituent]
     """
     import os
+
     import xarray as xr
-    from scipy.interpolate import RegularGridInterpolator
 
     result = []
     for name in constituents:
         nc_file = os.path.join(path, f"{name.lower()}.nc")
         if not os.path.isfile(nc_file):
-            raise FileNotFoundError(
-                f"GOT constituent file not found: {nc_file}"
-            )
+            raise FileNotFoundError(f"GOT constituent file not found: {nc_file}")
 
         ds = xr.open_dataset(nc_file, decode_times=False)
 
@@ -251,20 +287,12 @@ def read_got_constituents(
         amp_raw = np.nan_to_num(
             ds["amplitude"].values.astype(np.float64) / 100.0, nan=0.0
         )
-        pha_raw = np.nan_to_num(
-            ds["phase"].values.astype(np.float64), nan=0.0
-        )
+        pha_raw = np.nan_to_num(ds["phase"].values.astype(np.float64), nan=0.0)
 
-        interp_amp = RegularGridInterpolator(
-            (lat_got, lon_got), amp_raw, bounds_error=False, fill_value=0.0
+        amp, pha_deg = _interp_to_boundary(
+            lat_got, lon_got, amp_raw, pha_raw, lon_bnd, lat_bnd, fill_value=0.0
         )
-        interp_pha = RegularGridInterpolator(
-            (lat_got, lon_got), pha_raw, bounds_error=False, fill_value=0.0
-        )
-
-        pts = np.column_stack([lat_bnd, lon_bnd])
-        amp = interp_amp(pts)
-        pha = np.deg2rad(interp_pha(pts))
+        pha = np.deg2rad(pha_deg)
 
         omega = ASTRO_FREQUENCIES.get(name.upper())
         if omega is None:
@@ -314,8 +342,8 @@ def read_tpxo_constituents(
     constituents : list[TidalConstituent]
     """
     import os
+
     import xarray as xr
-    from scipy.interpolate import RegularGridInterpolator
 
     if not os.path.isfile(path):
         raise FileNotFoundError(f"TPXO grid file not found: {path}")
@@ -349,16 +377,9 @@ def read_tpxo_constituents(
         amp_raw = np.sqrt(hRe[k] ** 2 + hIm[k] ** 2)
         pha_raw = np.arctan2(-hIm[k], hRe[k])
 
-        interp_amp = RegularGridInterpolator(
-            (lat_grid, lon_grid), amp_raw, bounds_error=False, fill_value=0.0
+        amp, pha = _interp_to_boundary(
+            lat_grid, lon_grid, amp_raw, pha_raw, lon_bnd, lat_bnd, fill_value=0.0
         )
-        interp_pha = RegularGridInterpolator(
-            (lat_grid, lon_grid), pha_raw, bounds_error=False, fill_value=0.0
-        )
-
-        pts = np.column_stack([lat_bnd, lon_bnd])
-        amp = interp_amp(pts)
-        pha = interp_pha(pts)
 
         omega = ASTRO_FREQUENCIES.get(name.upper(), ASTRO_FREQUENCIES.get(name))
         if omega is None:
@@ -430,8 +451,7 @@ def _build_constituent_index(
             idx_map[key] = lower_names.index(key)
         else:
             raise ValueError(
-                f"Constituent '{name}' not found in TPXO file. "
-                f"Available: {con_names}"
+                f"Constituent '{name}' not found in TPXO file. Available: {con_names}"
             )
     return idx_map
 

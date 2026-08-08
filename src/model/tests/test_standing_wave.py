@@ -5,6 +5,7 @@ matching Merian's formula: T = 2L / sqrt(g * h).
 """
 
 import warnings
+
 warnings.filterwarnings(
     "ignore", message="numpy.ndarray size changed, may indicate binary incompatibility"
 )
@@ -28,7 +29,9 @@ def _merian_period(L: float, h: float, n_mode: int = 1) -> float:
     return 2.0 * L / (n_mode * np.sqrt(9.81 * h))
 
 
-def _analytical_eta(x: np.ndarray, t: float, L: float, h: float, a0: float) -> np.ndarray:
+def _analytical_eta(
+    x: np.ndarray, t: float, L: float, h: float, a0: float
+) -> np.ndarray:
     """Analytical solution for the first-mode seiche.
 
     η(x, t) = a0 * cos(π x / L) * cos(ω₁ t)
@@ -40,10 +43,10 @@ def _analytical_eta(x: np.ndarray, t: float, L: float, h: float, a0: float) -> n
 
 def test_standing_wave_period():
     """Simulate a seiche for one period and verify the period is correct."""
-    L = 10000.0   # basin length [m]
-    H = 10.0      # depth [m]
+    L = 10000.0  # basin length [m]
+    H = 10.0  # depth [m]
     nx = 50
-    ny = 2        # effectively 1D
+    ny = 2  # effectively 1D
     dx = L / nx
     dy = dx
 
@@ -75,7 +78,6 @@ def test_standing_wave_period():
     duration = n_cycles_test * T_expected
 
     zero_crossings: list[float] = []
-    prev_eta = np.mean(solver.eta[0, nx // 2])
 
     solver.run(
         dt=dt,
@@ -83,9 +85,6 @@ def test_standing_wave_period():
         callback=None,
         progress_interval=duration,
     )
-
-    n_steps = solver._step_count
-    n_steps_replay = min(n_steps * 2, 50000)
 
     solver.set_initial_conditions(eta0=eta0_2d, u0=None, v0=None)
     solver._t = 0.0
@@ -105,13 +104,15 @@ def test_standing_wave_period():
         rel_error = abs(measured_period - T_expected) / T_expected
         assert rel_error < 0.10, (
             f"Seiche period error: expected {T_expected:.1f} s, "
-            f"got {measured_period:.1f} s (error {rel_error*100:.1f}%)"
+            f"got {measured_period:.1f} s (error {rel_error * 100:.1f}%)"
         )
     else:
         if pytest:
             pytest.skip("Not enough zero crossings detected")
         else:
-            assert False, f"Not enough zero crossings detected: {len(zero_crossings)}"
+            raise AssertionError(
+                f"Not enough zero crossings detected: {len(zero_crossings)}"
+            )
 
 
 def test_standing_wave_no_coriolis_damping():
@@ -123,9 +124,7 @@ def test_standing_wave_no_coriolis_damping():
     dx = L / nx
     dy = dx
 
-    grid = StructuredGrid.from_uniform(
-        nx=nx, ny=ny, dx=dx, dy=dy, lat0=0.0
-    )
+    grid = StructuredGrid.from_uniform(nx=nx, ny=ny, dx=dx, dy=dy, lat0=0.0)
     grid.h[:, :] = H
     grid.h_u[:] = H
     grid.h_v[:] = H
@@ -147,7 +146,6 @@ def test_standing_wave_no_coriolis_damping():
     duration = 5 * T
 
     eta_peaks: list[float] = []
-    prev_peak = -np.inf
     for i in range(int(duration / dt)):
         solver.step(dt)
         cur = float(np.max(np.abs(solver.eta[0, :])))
@@ -156,4 +154,4 @@ def test_standing_wave_no_coriolis_damping():
 
     if len(eta_peaks) >= 3:
         decay = (eta_peaks[0] - eta_peaks[-1]) / eta_peaks[0]
-        assert decay < 0.30, f"Excessive damping: amplitude decayed {decay*100:.1f}%"
+        assert decay < 0.30, f"Excessive damping: amplitude decayed {decay * 100:.1f}%"

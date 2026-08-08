@@ -4,7 +4,7 @@ Compute and visualize tidal-current energy potential for the Philippine archipel
 
 - **Screening model:** 2D shallow-water finite-difference solver (Python + NumPy)
 - **Next-tier engine:** [TELEMAC-2D](https://opentelemac.org/) (finite-element, for refined site assessment)
-- **Bathymetry:** [GEBCO 2024](https://www.gebco.net/data_and_products/gridded_bathymetry_data/) (15 arc-second)
+- **Bathymetry:** [GEBCO](https://www.gebco.net/data_and_products/gridded_bathymetry_data/) global grid (15 arc-second), clipped to the Philippines — e.g. the `gebco_2026_n19.03_s14.0_w118.0_e124.0.nc` clip in `data/gebco_bathymetry/`
 - **Tidal forcing:** GOT4.10c (NASA), FES2014 (AVISO), TPXO9 (OSU), or synthetic tide
 - **Land mask:** GADM Philippines shapefile (rasterised onto model grid)
 - **Web stack:** Flask + MapLibre GL JS
@@ -54,6 +54,7 @@ See [src/README.md](src/README.md) for manual download URLs, extraction instruct
 
 ```bash
 pip install -r src/requirements.txt
+pip install numba        # optional: ~5× faster solver (auto-enabled)
 ```
 
 ### 3. Generate output with the screening model
@@ -96,29 +97,38 @@ curl "http://localhost:5000/api/query?lat=12.5&lon=122.5"
 ├── src/
 │   ├── model/                             # Screening model (Python)
 │   │   ├── __init__.py                    # Package init
-│   │   ├── run.py                         # CLI entry point
+│   │   ├── run.py                         # CLI entry point (python -m src.model.run)
+│   │   ├── config.py                      # Config loading & validation
 │   │   ├── config.yaml                    # Default simulation parameters
 │   │   ├── solver.py                      # Forward-backward Arakawa C-grid solver
+│   │   ├── kernels.py                     # Numba-JIT fused step kernel (optional, 5× speedup)
 │   │   ├── grid.py                        # StructuredGrid dataclass + builders
 │   │   ├── forcing.py                     # Tidal BC (synthetic | FES2014 | TPXO9 | GOT4.10c)
 │   │   ├── bathymetry.py                  # GEBCO loading, regridding, shapefile land mask
-│   │   ├── output.py                      # NetCDF, COG GeoTIFF, GeoJSON writer
+│   │   ├── output.py                      # Streaming NetCDF, COG GeoTIFF, GeoJSON writer
 │   │   ├── utils.py                       # Coriolis, CFL, interpolation helpers
 │   │   └── tests/
 │   │       ├── __init__.py
 │   │       ├── test_conservation.py        # Mass conservation & power-density tests
 │   │       ├── test_tidal_channel.py       # M2-forced channel validation
-│   │       └── test_standing_wave.py       # Seiche period validation
+│   │       ├── test_standing_wave.py       # Seiche period validation
+│   │       ├── test_end_to_end.py          # Full-pipeline integration tests
+│   │       └── test_config_and_streaming.py # Config validation, streaming NetCDF, resume
 │   ├── web/                               # Web visualisation
 │   │   ├── __init__.py
 │   │   ├── app.py                         # Flask API (tiles, queries, downloads)
 │   │   ├── requirements.txt               # Web-only dependencies
-│   │   └── static/
-│   │       └── index.html                 # MapLibre GL JS interactive map
+│   │   ├── static/
+│   │   │   └── index.html                 # MapLibre GL JS interactive map
+│   │   └── tests/
+│   │       └── test_app.py                # Flask API tests (tiles, query, metadata)
 │   ├── notebooks/
 │   │   └── 01_hydrodynamic_model.ipynb    # Educational walkthrough
-│   ├── requirements.txt                   # Consolidated Python dependencies
-│   ├── Dockerfile                         # All-in-one image
+│   ├── requirements.txt                   # Consolidated local-dev dependencies
+│   ├── requirements-model.txt             # Model runtime dependencies
+│   ├── requirements-dev.txt               # Dev/test tooling (pytest) for the image
+│   ├── requirements-lock.txt              # Pinned lockfile (Docker builds)
+│   ├── Dockerfile                         # All-in-one image (gunicorn, locked deps)
 │   └── README.md                          # Step-by-step guide
 ├── data/
 │   ├── .gitkeep                           # Directory tracked; contents ignored
@@ -130,11 +140,17 @@ curl "http://localhost:5000/api/query?lat=12.5&lon=122.5"
 ├── output/
 │   └── .gitkeep                           # Directory tracked; contents ignored
 ├── downloader.py                          # Dataset download helper
+├── generate_test_data.py                  # Synthetic data generator for the web service
 ├── docker-compose.yml                     # Service orchestration
+├── pyproject.toml                         # Packaging, pytest, ruff, mypy, black config
+├── LICENSE                                # MIT licence
 ├── .gitignore
+├── .github/workflows/ci.yml               # Lint + type-check + test CI
 ├── docs/
-│   ├── plan.md                            # Detailed implementation plan
+│   ├── AGENTS.md                          # Agent/contributor context
+│   ├── plan.md                            # Implementation plan
 │   ├── model.md                           # Physics & methodology reference
+│   ├── EXPLAINER.ipynb                    # 2-hour runnable workshop notebook
 │   └── workflow.drawio                    # Visual workflow diagram
 └── README.md
 ```
@@ -183,34 +199,52 @@ Key parameters in `src/model/config.yaml`:
 | `simulation` | `cd` | 0.0025 | Bottom drag coefficient |
 | `simulation` | `ah` | 0.0 | Horizontal eddy viscosity (0 = off) |
 | `simulation` | `advection` | `false` | Non-linear advection terms |
+| `simulation` | `use_numba` | `null` | `null` = auto-JIT when numba installed (~5× faster); `true`/`false` to force |
 | `simulation` | `rho` | 1025.0 | Seawater density (kg/m³) |
 | `tidal_forcing` | `source` | `got` | `synthetic`, `got`, `fes2014`, or `tpxo9` |
 | `tidal_forcing` | `path` | GOT netCDF dir | Path to constituent files |
 | `tidal_forcing` | `constituents` | [M2, S2, K1, O1] | Which harmonics to include |
 | `output` | `dir` | `output/` | Output directory |
 | `output` | `save_interval_hours` | 1 | Snapshot save interval |
+| `output` | `results_nc` | `results.nc` | Streaming NetCDF filename |
 | `output` | `hotspot_threshold` | 200.0 | Hotspot minimum (W/m²) |
 | `logging` | `level` | `INFO` | Log level |
 | `logging` | `progress_interval_hours` | 1.0 | Progress log frequency |
 
-Override via CLI: `python -m src.model.run --duration-days 30 --resolution-km 1.0 --output-dir my_output`
+CLI overrides:
+
+```bash
+python -m src.model.run --duration-days 30 --resolution-km 1.0 --output-dir my_output
+python -m src.model.run --tidal-source synthetic          # force synthetic tide
+python -m src.model.run --resume output/results.nc        # continue from last snapshot
+```
+
+If `bathymetry.path` is unset or the file is missing, the model logs a
+warning and runs on a synthetic test grid — no data download needed for a
+first smoke run.
 
 ## Validation
 
 - [Seiche period](src/model/tests/test_standing_wave.py) — validated against Merian's formula for closed basins
 - [Tidal channel](src/model/tests/test_tidal_channel.py) — validated against analytic M2-forced channel solution
 - [Mass conservation](src/model/tests/test_conservation.py) — drift remains below 0.01% in production runs
+- [Numba parity](src/model/tests/test_end_to_end.py) — the JIT kernel is bit-for-bit identical to the NumPy path
 - Compare water levels against [NAMRIA](https://www.namria.gov.ph/) tide gauges or [IOC sea-level stations](https://www.ioc-sealevelmonitoring.org/)
 - Cross-check hotspots against known tidal-energy sites (San Bernardino Strait, Surigao Strait)
 
 ## Test Suite
 
 ```bash
-# Docker
+# Docker (the image ships pytest + the test suite)
 docker run --rm --entrypoint python tidal-model -m pytest /app/src/model/tests/
 
-# Local
-python -m pytest src/model/tests/
+# Local (model + web tests, config in pyproject.toml)
+python -m pytest
+
+# Lint / format / types
+ruff check src downloader.py generate_test_data.py
+ruff format --check src downloader.py generate_test_data.py
+mypy src/model src/web
 ```
 
 ## Troubleshooting
@@ -220,11 +254,12 @@ python -m pytest src/model/tests/
 | Docker build fails at `pip install rasterio` | The image needs `libgdal-dev`; ensure it installs before pip |
 | `max|η|=0.00 m \| max|U|=0.00 m/s` in logs | Config points to a bathymetry file but no open-boundary cells exist — ensure `land_shapefile` is set or use `null` for the elevation-based fallback |
 | Model produces NaN | CFL safety factor too high — lower `cfl_safety` to 0.25 or explicitly set `dt` in config |
+| `bathymetry.path` not found warning | Expected on a fresh clone — the model falls back to a synthetic grid; download GEBCO for production runs |
 | GeoTIFF not found (404 on tiles) | Run the model first to generate `output/tidal_power_density.tif` |
 | Flask cannot find results | Verify `./output` is volume-mounted at `/output` in the container |
-| Model runs slowly | Reduce `duration_days` or increase `resolution_km` for testing |
+| Model runs slowly | Install numba (`pip install numba`) — auto-enabled, ~5× faster; or reduce `duration_days` / increase `resolution_km` |
 | `netCDF4` / `fiona` import error | Run `pip install -r src/requirements.txt` |
-| Tidal boundary all NaN | GOT source data has NaN over land — update to latest `forcing.py` which fills NaN before interpolation |
+| Tidal boundary all NaN | GOT source data has NaN over land — `forcing.py` fills NaN before interpolation (already fixed) |
 
 ## Future Extensions
 

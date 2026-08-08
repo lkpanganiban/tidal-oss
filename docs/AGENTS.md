@@ -39,11 +39,14 @@ required packages — **always use the `tidaloss` environment**.
 | rasterio   | 1.5.0    |
 | fiona      | 1.10.1   |
 | netCDF4    | 1.7.4    |
+| numba      | 0.66     |
 | flask      | — (web)  |
 | pillow     | — (web)  |
+| pytest     | 9.x      |
+| ruff       | 0.16+    |
+| mypy       | 2.x      |
 
-pytest is **not** installed.  The tests import pytest conditionally and run
-standalone (see § 6).
+pytest, ruff, and mypy are installed in the environment (see § 6 for usage).
 
 ## 2. Project overview
 
@@ -82,25 +85,33 @@ density $P = \frac12 \rho |U|^3$ in W/m².
 │   ├── model/                   # screening model (Phase A)
 │   │   ├── __init__.py
 │   │   ├── run.py               # CLI entry point (python -m src.model.run)
+│   │   ├── config.py            # config loading & validation
 │   │   ├── config.yaml          # default simulation parameters
 │   │   ├── grid.py              # StructuredGrid dataclass + builders
 │   │   ├── solver.py            # ShallowWaterSolver (forward-backward C-grid)
+│   │   ├── kernels.py           # numba-JIT fused step kernel (optional, ~5× faster)
 │   │   ├── forcing.py           # tidal boundary generators (GOT/FES/TPXO)
 │   │   ├── bathymetry.py        # GEBCO loading, regridding, land mask
-│   │   ├── output.py            # NetCDF, COG GeoTIFF, GeoJSON writer
+│   │   ├── output.py            # streaming NetCDF, COG GeoTIFF, GeoJSON writer
 │   │   ├── utils.py             # Coriolis, CFL, interpolation helpers
 │   │   └── tests/
 │   │       ├── __init__.py
 │   │       ├── test_conservation.py    # mass conservation & power non-neg
 │   │       ├── test_tidal_channel.py   # M2-forced channel (flow + phase)
-│   │       └── test_standing_wave.py   # seiche period (Merian's formula)
+│   │       ├── test_standing_wave.py   # seiche period (Merian's formula)
+│   │       ├── test_end_to_end.py      # full-pipeline integration tests
+│   │       └── test_config_and_streaming.py  # config validation, streaming, resume
 │   ├── web/                     # web visualisation (Phase B)
 │   │   ├── __init__.py
 │   │   ├── app.py               # Flask API (tiles, query, downloads)
 │   │   ├── requirements.txt     # web-only dependencies
-│   │   └── static/index.html    # MapLibre GL JS interactive map
+│   │   ├── static/index.html    # MapLibre GL JS interactive map
+│   │   └── tests/test_app.py    # Flask API tests
 │   └── notebooks/
 │       └── 01_hydrodynamic_model.ipynb  # first-principles walkthrough
+├── pyproject.toml               # packaging + pytest/ruff/mypy/black config
+├── LICENSE                      # MIT licence
+├── .github/workflows/ci.yml     # lint + type-check + test CI
 ├── data/                        # external datasets (gitignored except .gitkeep)
 │   ├── GOT4.10c/                # extracted per-constituent NetCDFs
 │   ├── gebco_bathymetry/        # GEBCO_2024.nc (manual download)
@@ -120,13 +131,15 @@ density $P = \frac12 \rho |U|^3$ in W/m².
 source /home/bluey/miniconda3/etc/profile.d/conda.sh && conda activate tidaloss
 cd /home/bluey/dev/work/tidal-oss
 python -c "
-import sys; sys.path.insert(0,'src')
 from model.grid import StructuredGrid
 from model.solver import ShallowWaterSolver
 from model.forcing import make_synthetic_tidal_boundary
 # ... (see EXPLAINER.ipynb for full examples)
 "
 ```
+
+(`pip install -e .` or `PYTHONPATH=src` makes the `model` / `web` packages
+importable; pytest handles this automatically.)
 
 ### 4.2 Production run (with data)
 
@@ -150,48 +163,18 @@ jupyter notebook docs/EXPLAINER.ipynb
 ```bash
 source /home/bluey/miniconda3/etc/profile.d/conda.sh && conda activate tidaloss
 cd /home/bluey/dev/work/tidal-oss
-python -c "
-import sys; sys.path.insert(0,'src'); sys.path.insert(0,'src/model/tests')
-from test_conservation import *
-from test_tidal_channel import *
-from test_standing_wave import *
-from test_end_to_end import *
-for fn in [test_mass_conservation_closed_basin,
-           test_mass_conservation_with_friction,
-           test_power_density_nonnegative,
-           test_tidal_channel_develops_flow,
-           test_tidal_channel_phase,
-           test_standing_wave_period,
-           test_standing_wave_no_coriolis_damping,
-           test_bathymetry_pipeline_end_to_end,
-           test_forcing_pipeline_end_to_end,
-           test_full_simulation_pipeline,
-           test_output_netcdf_roundtrip,
-           test_output_geotiff_valid,
-           test_output_geojson_hotspots,
-           test_cfl_auto_computation_sensible,
-           test_power_density_formula_consistency,
-           test_open_boundary_detection,
-           test_spring_neap_modulation_visible,
-           test_solver_restart_consistency,
-           test_config_file_valid]:
-    fn()
-print('All 19 tests passed')
-"
+python -m pytest          # model + web tests (config in pyproject.toml)
 ```
 
-Expected output (times vary by hardware):
+### 4.5 Lint, format, and type-check
 
+```bash
+ruff check src downloader.py generate_test_data.py
+ruff format --check src downloader.py generate_test_data.py
+mypy src/model src/web
 ```
-conservation_closed     OK   0.3s
-conservation_friction   OK   0.8s
-power_density_nonneg    OK   0.0s
-tidal_channel_flow      OK   3.0s
-tidal_channel_phase     OK   9.2s
-seiche_period           OK   7.9s
-seiche_damping          OK   1.8s
-19/19 tests passed
-```
+
+These three commands are also enforced in CI (`.github/workflows/ci.yml`).
 
 ## 5. Key model architecture
 
@@ -247,22 +230,16 @@ NetCDF
 
 ## 6. Testing
 
-pytest is **not** installed in the `tidaloss` environment.  The test modules
-handle this gracefully:
+pytest is installed and configured in `pyproject.toml` (`testpaths` covers
+`src/model/tests/` and `src/web/tests/`; `pythonpath = ["src"]` means no
+`PYTHONPATH` juggling is needed).  Run everything with:
 
-```python
-try:
-    import pytest
-except ImportError:
-    pytest = None
+```bash
+python -m pytest
 ```
 
-Each test function can be imported and called directly without pytest:
-
-```python
-from test_conservation import test_mass_conservation_closed_basin
-test_mass_conservation_closed_basin()  # raises AssertionError on failure
-```
+The model test modules still import pytest conditionally so they can also be
+run standalone without a test runner (legacy behaviour, kept for debugging):
 
 ### Unit tests (7 tests, `test_conservation.py`, `test_tidal_channel.py`, `test_standing_wave.py`)
 
@@ -309,8 +286,10 @@ test_mass_conservation_closed_basin()  # raises AssertionError on failure
 | `simulation`  | `cd`                 | 0.0025             | Bottom drag coefficient              |
 | `simulation`  | `ah`                 | 0.0                | Horizontal eddy viscosity            |
 | `simulation`  | `advection`          | `false`            | Non-linear advection terms           |
+| `simulation`  | `use_numba`          | `null`             | Auto-JIT when numba installed; force `true`/`false` |
 | `tidal_forcing`| `source`            | `got`              | One of: `synthetic`, `got`, `fes2014`, `tpxo9` |
 | `tidal_forcing`| `constituents`      | [M2, S2, K1, O1]   | Four-constituent minimum             |
+| `output`      | `results_nc`         | `results.nc`       | Streaming NetCDF filename            |
 | `output`      | `hotspot_threshold`  | 200.0              | Minimum mean power density for hotspot export (W/m²) |
 
 ## 8. Troubleshooting cheat-sheet
@@ -319,11 +298,13 @@ test_mass_conservation_closed_basin()  # raises AssertionError on failure
 |---------|-------------|-----|
 | `max|η|=0.00 m` in logs | No open-boundary cells are wet | Check land_shapefile or min_depth |
 | Model produces NaN | CFL safety too high | Set `cfl_safety: 0.25` or set `dt` explicitly |
+| `bathymetry.path not found` warning | Fresh clone with no GEBCO yet | Expected — falls back to synthetic grid; download GEBCO for production |
+| Config ValueError at startup | Misconfigured config.yaml | `validate_config` message names the offending section/key |
 | `grid.f_u` / `grid.f_v` AttributeError | You wrote `grid.f_u[:] = 0` | See § 5.3 — write `grid.f[:] = 0` only |
 | `grid.eta` AttributeError | You wrote `np.zeros_like(grid.eta)` | See § 5.3 — use `np.zeros((g.ny, g.nx))` |
 | GeoTIFF not found (404 on tiles) | Model hasn't run yet | Run `python -m src.model.run` first |
 | Flask can't find results | Output not mounted in container | Check `docker-compose.yml` volume mount |
-| Test import fails (`no module pytest`) | pytest not installed | Tests run standalone — see § 6 |
+| Test import fails (`no module pytest`) | Wrong Python environment | Activate `tidaloss` conda env (§ 1) or run `pip install -e .[dev]` |
 | `netCDF4` / `fiona` import error | Wrong Python environment | Activate `tidaloss` conda env (§ 1) |
 | `_laplacian` TypeError | Outdated `solver.py` (< 2024‑01‑08) | Pull latest — the `slice + int` bug is fixed |
 
@@ -331,7 +312,9 @@ test_mass_conservation_closed_basin()  # raises AssertionError on failure
 
 1. **Activate the `tidaloss` environment first** (§ 1).
 2. Run the test suite after every change that touches `solver.py`, `grid.py`,
-   `forcing.py`, or `utils.py` (§ 4.4).
+   `forcing.py`, `utils.py`, or `kernels.py` (§ 4.4).
+3. Run `ruff check` + `ruff format --check` + `mypy src/model src/web` after
+   any edit (these gates run in CI, § 4.5).
 3. Do **not** add back the patterns listed in § 5.3.
 4. The `docs/EXPLAINER.ipynb` notebook must remain runnable top-to-bottom.
    If you change a model API, update the notebook to match.
