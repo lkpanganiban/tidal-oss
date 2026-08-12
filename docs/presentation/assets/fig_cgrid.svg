@@ -1,0 +1,10 @@
+<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 760 430'>
+<rect width='760' height='430' rx='18' fill='#fbfdff'/>
+<text x='34' y='44' font-family='Arial' font-size='29' font-weight='700' fill='#0b3c5d'>Arakawa C-grid: staggered variables</text>
+<g stroke='#b6cbd5' stroke-width='2' fill='none'>
+<path d='M120 110H600M120 190H600M120 270H600M120 350H600M120 110V350M280 110V350M440 110V350M600 110V350'/></g>
+<g fill='#e76f51'><circle cx='200' cy='150' r='10'/><circle cx='360' cy='150' r='10'/><circle cx='520' cy='150' r='10'/><circle cx='200' cy='230' r='10'/><circle cx='360' cy='230' r='10'/><circle cx='520' cy='230' r='10'/><circle cx='200' cy='310' r='10'/><circle cx='360' cy='310' r='10'/><circle cx='520' cy='310' r='10'/></g>
+<g fill='#0e7490'><circle cx='120' cy='150' r='8'/><circle cx='280' cy='150' r='8'/><circle cx='440' cy='150' r='8'/><circle cx='600' cy='150' r='8'/><circle cx='120' cy='230' r='8'/><circle cx='280' cy='230' r='8'/><circle cx='440' cy='230' r='8'/><circle cx='600' cy='230' r='8'/></g>
+<g fill='#f4a261'><circle cx='200' cy='110' r='8'/><circle cx='360' cy='110' r='8'/><circle cx='520' cy='110' r='8'/><circle cx='200' cy='190' r='8'/><circle cx='360' cy='190' r='8'/><circle cx='520' cy='190' r='8'/><circle cx='200' cy='270' r='8'/><circle cx='360' cy='270' r='8'/><circle cx='520' cy='270' r='8'/><circle cx='200' cy='350' r='8'/><circle cx='360' cy='350' r='8'/><circle cx='520' cy='350' r='8'/></g>
+<text x='625' y='155' font-family='Arial' font-size='22' fill='#0e7490'>u-face</text><text x='625' y='195' font-family='Arial' font-size='22' fill='#f4a261'>v-face</text><text x='625' y='235' font-family='Arial' font-size='22' fill='#e76f51'>η centre</text>
+<text x='34' y='405' font-family='Arial' font-size='19' fill='#5a707e'>Velocity components live on faces; free-surface elevation lives at cell centres.</text></svg>

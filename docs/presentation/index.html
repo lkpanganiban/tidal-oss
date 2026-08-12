@@ -1,0 +1,787 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Developing an Ocean Renewable Energy Platform with FOSS4G</title>
+<link rel="stylesheet" href="assets/vendor/reveal/dist/reveal.css">
+<link rel="stylesheet" href="assets/vendor/reveal/dist/theme/white.css">
+<style>
+  /* ---------- Ocean-optimised light theme ---------- */
+  :root {
+    --deep:   #0b3c5d;
+    --ocean:  #0e7490;
+    --aqua:   #1aa7c4;
+    --coral:  #e76f51;
+    --amber:  #f4a261;
+    --ink:    #12232e;
+    --paper:  #fbfdff;
+    --muted:  #5a707e;
+  }
+  html, body { background: var(--paper); }
+  .reveal { color: var(--ink); font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif; font-size: 34px; }
+  .reveal h1, .reveal h2, .reveal h3, .reveal h4 { font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif; color: var(--deep); text-transform: none; letter-spacing: 0; }
+  .reveal h1 { font-size: 1.15em; line-height: 1.08; font-weight: 800; }
+  .reveal h2 { font-size: 0.95em; font-weight: 800; margin-bottom: 0.35em; }
+  .reveal h3 { font-size: 0.62em; font-weight: 700; color: var(--ocean); text-transform: uppercase; letter-spacing: 0.06em; }
+  .reveal section { text-align: left; }
+  .reveal .center { text-align: center; }
+  .reveal p, .reveal li { font-size: 0.52em; line-height: 1.42; }
+  .reveal ul { margin: 0.25em 0 0.4em 1.1em; }
+  .reveal li { margin-bottom: 0.18em; }
+  .reveal .kick { color: var(--ocean); font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em; font-size: 0.42em; margin-bottom: 0.3em; }
+  .reveal .subtitle { color: var(--muted); font-size: 0.5em; margin-top: 0.4em; }
+  .reveal .small { font-size: 0.4em; color: var(--muted); }
+  .reveal .accent { color: var(--coral); font-weight: 700; }
+  .reveal .ocean { color: var(--ocean); font-weight: 700; }
+  .reveal .card { border: 1px solid #d9e6ec; border-left: 6px solid var(--ocean); border-radius: 10px; padding: 0.4em 0.6em; margin: 0.35em 0; background: #f4fafc; }
+  .reveal .card.coral { border-left-color: var(--coral); background: #fdf5f1; }
+  .reveal .card.amber { border-left-color: var(--amber); background: #fdf9f0; }
+  .reveal .card h4 { margin: 0 0 0.15em; color: var(--deep); font-size: 0.5em; }
+  .reveal .card p { margin: 0.1em 0; font-size: 0.46em; }
+  .reveal .grid { display: grid; column-gap: 1.2em; align-items: start; }
+  .reveal .two-col { grid-template-columns: 1.05fr 1fr; }
+  .reveal .fig-right { grid-template-columns: 1.15fr 1fr; align-items: center; }
+  .reveal .three-col { grid-template-columns: 1fr 1fr 1fr; }
+  .reveal .fig { border-radius: 8px; box-shadow: 0 6px 24px rgba(11,60,93,0.18); width: 100%; }
+  .reveal .fig-cap { font-size: 0.36em; color: var(--muted); margin-top: 0.4em; text-align: center; }
+  .reveal .formula { font-family: Georgia, serif; font-style: italic; font-size: 0.95em; color: var(--deep); background: #edf6f9; border: 1px dashed var(--aqua); border-radius: 12px; padding: 0.5em 0.8em; text-align: center; margin: 0.6em 0; }
+  .reveal .chip { display: inline-block; background: var(--deep); color: #fff; border-radius: 999px; padding: 0.08em 0.7em; font-size: 0.42em; font-weight: 600; margin: 0.12em 0.3em 0.12em 0; }
+  .reveal .chip.ocean { background: var(--ocean); }
+  .reveal .chip.coral { background: var(--coral); }
+  .reveal .chip.amber { background: var(--amber); color: #3a2c00; }
+  .reveal .chip.ghost { background: #e6eef2; color: var(--deep); }
+  .reveal .datapath { display: flex; align-items: center; justify-content: space-between; font-size: 0.56em; font-weight: 700; color: var(--deep); }
+  .reveal .datapath .chip { font-size: 0.9em; padding: 0.1em 0.65em; }
+  .reveal .datapath-panel { padding: 0.3em 0.7em; }
+  .reveal .datapath-panel .visual-label { font-size: 0.4em; }
+  .reveal .num { color: var(--coral); font-weight: 800; }
+  .reveal .ref { position: fixed; bottom: 14px; right: 20px; font-size: 0.30em; color: #93a7b3; background: rgba(251,253,255,0.85); padding: 0.15em 0.7em; border-radius: 999px; }
+  .reveal .progress { color: var(--aqua); }
+  .reveal .progress span { background: var(--aqua); }
+  .reveal .slide-number { color: var(--ocean); font-size: 0.35em; }
+  /* title slide */
+  .title-slide h1 { font-size: 1.5em; }
+  .title-slide .rule { height: 5px; width: 14%; background: linear-gradient(90deg, var(--ocean), var(--aqua), var(--coral)); border-radius: 3px; margin: 0.5em 0 0.5em 0; }
+  /* stack diagram */
+  .stack text { font-family: "Segoe UI", Arial, sans-serif; font-size: 17px; fill: var(--ink); }
+  .stack text.t { font-size: 22px; font-weight: 700; fill: #fff; }
+  .stack text.muted { font-size: 18px; }
+  .stack .box { fill: #fff; stroke: var(--ocean); stroke-width: 1.6; rx: 8; }
+  .stack .box.title { fill: var(--deep); stroke: var(--deep); }
+  .stack .box.data { fill: #fdf9f0; stroke: var(--amber); }
+  .stack .box.alg  { fill: #edf6f9; stroke: var(--aqua); }
+  .stack .box.out  { fill: #fdf5f1; stroke: var(--coral); }
+  .stack .arrow { stroke: #7f9aa8; stroke-width: 2; fill: none; marker-end: url(#arrow); }
+  .reveal .footnote { font-size: 0.34em; color: var(--muted); margin-top: 0.5em; }
+  .reveal .visual-panel { background: #fff; border: 1px solid #d9e6ec; border-radius: 12px; padding: 0.28em; box-shadow: 0 6px 24px rgba(11,60,93,0.12); }
+  .reveal .visual-panel img { display: block; width: 100%; max-height: 245px; object-fit: contain; border-radius: 8px; }
+  .reveal .visual-panel svg { display: block; width: 100%; max-height: 245px; }
+  .reveal .visual-label { font-size: 0.34em; color: var(--muted); text-align: center; margin: 0.25em 0 0.05em; }
+  .reveal .visual-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 0.35em; align-items: center; }
+  .reveal .visual-pair img, .reveal .visual-pair svg { min-width: 0; }
+  .reveal .stat-band { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5em; margin: 0.55em 0; }
+  .reveal .stat { background: var(--deep); color: white; border-radius: 12px; padding: 0.35em 0.45em; text-align: center; }
+  .reveal .stat strong { display: block; font-size: 0.85em; color: #8de7f2; }
+  .reveal .stat span { display: block; font-size: 0.32em; line-height: 1.2; }
+  .reveal .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 0.65em; margin-top: 0.4em; }
+  .reveal .compare > div { border-radius: 14px; padding: 0.55em 0.65em; min-height: 160px; }
+  .reveal .compare .closed { background: #fdf5f1; border: 2px solid #e76f51; }
+  .reveal .compare .open { background: #edf6f9; border: 2px solid #1aa7c4; }
+  .reveal .compare h4 { font-size: 0.52em; margin: 0 0 0.25em; }
+  .reveal .compare p { margin: 0.12em 0; font-size: 0.43em; }
+  .reveal .visual-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.45em; align-items: start; }
+  .reveal .visual-grid img { width: 100%; max-height: 290px; object-fit: contain; border-radius: 9px; box-shadow: 0 4px 18px rgba(11,60,93,0.14); }
+  .reveal .visual-grid .fig-cap { grid-column: 1 / -1; margin-top: -0.2em; }
+  .reveal .resource-intro { grid-template-columns: 0.82fr 1.28fr; }
+  .reveal .resource-intro .diagram-panel img { max-height: 310px; }
+  .reveal .diagram-panel img, .reveal .diagram-panel svg { max-height: none; }
+  .reveal .diagram-inline-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6em; align-items: stretch; }
+  .reveal .diagram-inline-pair img { width: 100%; height: 220px; max-height: none; object-fit: contain; }
+  .reveal .phase1-detail { grid-template-columns: 0.82fr 1.38fr; }
+  .reveal .phase1-detail .visual-pair img, .reveal .phase1-detail .visual-pair svg { max-height: 245px; }
+  .reveal .hotspot-detail { display: block; }
+  .reveal .hotspot-copy { display: grid; grid-template-columns: 1fr 1fr; column-gap: 1.2em; }
+  .reveal .hotspot-visuals { display: grid; grid-template-columns: 1fr 1fr; gap: 0.7em; align-items: start; margin-top: 0.45em; }
+  .reveal .hotspot-visuals img { width: 100%; height: 200px; max-height: none; object-fit: contain; border-radius: 9px; box-shadow: 0 4px 18px rgba(11,60,93,0.14); }
+  .reveal .mcda-panel img { height: 130px; max-height: none !important; object-fit: contain; }
+  .reveal .roadmap-panel img { height: 150px; max-height: none !important; object-fit: contain; }
+  .reveal .turbine-visuals img { max-height: 190px; }
+  .reveal .webgis-slide { grid-template-columns: 1fr 1fr; }
+  .reveal .webgis-copy { display: grid; grid-template-columns: 1fr 1fr; column-gap: 0.7em; align-items: start; }
+  .reveal .webgis-figure { display: flex; flex-direction: column; align-items: center; }
+  .reveal .webgis-figure .fig { width: 100%; max-height: 700px; height: auto; object-fit: contain; }
+  .reveal .timeseries-panel img { width: 100%; height: 200px; max-height: none !important; object-fit: contain; }
+  .reveal blockquote { font-size: 0.5em; color: var(--deep); border-left: 6px solid var(--coral); background: #fdf5f1; padding: 0.4em 0.9em; border-radius: 6px; font-style: italic; margin: 0.5em 0; }
+  .reveal blockquote cite { display: block; font-size: 0.85em; color: var(--muted); margin-top: 0.3em; font-style: normal; }
+</style>
+</head>
+<body>
+<div class="reveal">
+<div class="slides">
+
+  <!-- ============ 1. TITLE ============ -->
+  <section class="title-slide">
+    <div class="kick center" style="text-align:center">FOSS4G · Open Geospatial for the Blue Economy</div>
+    <h1 style="text-align:center">Developing an Ocean Renewable Energy Platform with FOSS4G</h1>
+    <div class="rule" style="margin-left:auto;margin-right:auto"></div>
+    <p class="subtitle center" style="text-align:center">
+      Tidal-current energy screening for the Philippine archipelago —<br>
+      an end-to-end open geospatial workflow, from physics to the browser
+    </p>
+    <p class="small center" style="text-align:center; margin-top:0.9em">
+      <span class="chip">ocean energy</span><span class="chip ocean">FOSS4G</span><span class="chip coral">reproducibility</span><span class="chip ghost">marine spatial planning</span>
+    </p>
+    <aside class="notes">
+      Welcome. This is a story about building an ocean renewable energy platform entirely within an open geospatial ecosystem — no black boxes, no licence fees. Our case study: tidal-current energy in the Philippines, one of the world's great archipelagos.
+    </aside>
+  </section>
+
+  <!-- ============ 2. TIDAL CURRENT ENERGY ============ -->
+  <section>
+    <h3>Start with the resource</h3>
+    <h2>What is tidal current energy?</h2>
+    <div class="grid two-col resource-intro">
+      <div>
+        <div class="card">
+          <h4>Moving seawater is the resource</h4>
+          <p>Tidal currents are the horizontal movement of seawater caused by periodic changes in sea level. A tidal-stream turbine harvests the <span class="ocean">kinetic energy of the flow</span>.</p>
+        </div>
+        <div class="card coral">
+          <h4>Different from a tidal barrage</h4>
+          <p>A barrage or lagoon stores water behind a structure. A tidal-stream device sits in the moving water and extracts energy without impounding the basin.</p>
+        </div>
+        <div class="card amber">
+          <h4>Why it is attractive</h4>
+          <p>The astronomical driver is predictable. That makes current direction, timing and resource envelopes easier to forecast than weather-driven resources.</p>
+        </div>
+      </div>
+      <div class="visual-panel diagram-panel">
+        <img src="assets/fig_energy_conversion.svg" alt="Tidal flow converted into electricity">
+        <div class="visual-label">A tidal-stream device harvests flow in place: no dam, reservoir or fuel.</div>
+      </div>
+    </div>
+    <div class="stat-band">
+      <div class="stat"><strong>Predictable</strong><span>astronomical forcing</span></div>
+      <div class="stat"><strong>Dense</strong><span>water is ~800× denser than air</span></div>
+      <div class="stat"><strong>Local</strong><span>channels near coastal demand</span></div>
+    </div>
+    <aside class="notes">Begin with the physical resource. Tidal current energy is not the height of the tide; it is the moving water. Distinguish a stream turbine from a barrage so the audience understands the technology and the spatial problem.</aside>
+  </section>
+
+  <!-- ============ 3. TIDAL FORCING ============ -->
+  <section>
+    <h3>Why the water moves</h3>
+    <h2>Tides begin as astronomical forcing</h2>
+    <div class="grid two-col resource-intro">
+      <div class="visual-panel diagram-panel"><img src="assets/fig_tidal_forcing.svg" alt="Sun, Earth and Moon tidal forcing diagram"></div>
+      <div>
+        <div class="card">
+          <h4>Moon + Sun → changing water level</h4>
+          <p>Gravitational forcing raises and lowers the ocean surface. The basin-scale wave propagates as a shallow-water wave.</p>
+        </div>
+        <div class="card">
+          <h4>Constituents are the building blocks</h4>
+          <p><b>M₂</b> is the principal lunar semi-diurnal tide at 12.42 hours. <b>S₂</b>, <b>K₁</b> and <b>O₁</b> add solar and diurnal components.</p>
+        </div>
+        <div class="formula">η(t) = Σ A<sub>k</sub> cos(ω<sub>k</sub>t + φ<sub>k</sub>)</div>
+      </div>
+    </div>
+    <p class="footnote">The platform reconstructs boundary elevation from harmonic amplitudes and phases rather than treating the tide as a black-box input.</p>
+    <aside class="notes">Explain that the tide is a superposition of known astronomical frequencies. This is why harmonic constituents are such powerful open inputs for a reproducible model.</aside>
+  </section>
+
+  <!-- ============ 4. SPRING NEAP ============ -->
+  <section>
+    <h3>Predictability has a rhythm</h3>
+    <h2>M₂ and S₂ beat into the spring–neap cycle</h2>
+    <div class="grid two-col resource-intro">
+      <div class="visual-panel"><img src="assets/fig_spring_neap.png" alt="M2 and S2 harmonics forming the spring-neap cycle"></div>
+      <div>
+        <div class="card coral"><h4>Spring tide</h4><p>M₂ and S₂ are in phase. Tidal range and current speeds are highest.</p></div>
+        <div class="card"><h4>Neap tide</h4><p>The constituents move out of phase. The current envelope contracts.</p></div>
+        <div class="card amber"><h4>Why run for 15 days?</h4><p>The 14.77-day synodic cycle is the minimum window that captures both extremes. A shorter simulation can overstate or understate annual yield.</p></div>
+      </div>
+    </div>
+    <div class="stat-band"><div class="stat"><strong>12.42 h</strong><span>M₂ lunar period</span></div><div class="stat"><strong>14.77 d</strong><span>spring–neap envelope</span></div><div class="stat"><strong>15 d</strong><span>minimum screening run</span></div></div>
+    <aside class="notes">Use this slide to make clear that a peak-current map is not an energy-yield map. The full spring–neap envelope matters, and it directly motivates the model duration.</aside>
+  </section>
+
+  <!-- ============ 5. ELEVATION TO CURRENT ============ -->
+  <section>
+    <h3>The hydrodynamic link</h3>
+    <h2>How does a surface slope become a current?</h2>
+    <div class="grid two-col">
+      <div>
+        <div class="card coral"><h4>1 · Pressure gradient</h4><p>Water accelerates from high free surface to low free surface: <b>−g∇η</b>.</p></div>
+        <div class="card"><h4>2 · Continuity</h4><p>If water converges into a cell, the surface rises. Mass conservation links elevation change to flux.</p></div>
+        <div class="card amber"><h4>3 · Momentum balance</h4><p>Acceleration is opposed by bottom friction, with Coriolis and advection becoming important at larger scales and in constrictions.</p></div>
+      </div>
+      <div class="visual-panel diagram-panel"><img src="assets/fig_funnel_effect.svg" alt="Pressure gradient and funnel effect in a tidal strait"><div class="visual-label">A phase difference between basins drives flow; geometry controls its speed.</div></div>
+    </div>
+    <div class="formula">∂u/∂t = −g∂η/∂x − C<sub>d</sub>|u|u/h + ...</div>
+    <p class="footnote">The shallow-water equations are the bridge between an elevation boundary condition and a velocity field that a turbine can use.</p>
+    <aside class="notes">This is the conceptual bridge. A tide gauge measures elevation, but turbines need current speed. The shallow-water equations convert the pressure gradient into a depth-averaged velocity while accounting for friction and other forces.</aside>
+  </section>
+
+  <!-- ============ 6. TURBINE MECHANICS ============ -->
+  <section>
+    <h3>The device</h3>
+    <h2>How moving water becomes useful electricity</h2>
+    <div class="visual-panel diagram-panel"><img src="assets/fig_energy_conversion.svg" alt="Energy conversion chain from water to grid" style="height:180px;max-height:none;object-fit:contain"></div>
+    <div class="grid three-col" style="margin-top:0.45em">
+      <div class="card"><h4>Hydrodynamic rotor</h4><p>Blade lift creates torque as water passes through the swept area.</p></div>
+      <div class="card coral"><h4>Power take-off</h4><p>A shaft and generator convert mechanical rotation into electrical power.</p></div>
+      <div class="card amber"><h4>Real-world losses</h4><p>Electrical, mechanical and array losses mean useful output is below the theoretical resource.</p></div>
+    </div>
+    <p class="footnote">The platform separates theoretical resource density from turbine-specific output, capacity factor and AEP.</p>
+    <aside class="notes">Connect the physical resource to the engineering device. The map gives available kinetic energy; the turbine power curve tells us what a particular machine can actually produce.</aside>
+  </section>
+
+  <!-- ============ 7. CUBIC LAW ============ -->
+  <section>
+    <h3>The defining equation</h3>
+    <h2>Power density scales with the cube of current speed</h2>
+    <div class="grid two-col resource-intro">
+      <div class="visual-panel diagram-panel"><img src="assets/fig_cubic_power.png" alt="Cubic relationship between current speed and power density"></div>
+      <div>
+        <div class="formula">P = ½ρU³</div>
+        <div class="card"><h4>Where the cubic term comes from</h4><p>Energy density is <b>½ρU²</b>. The flow transports that energy at speed <b>U</b>. Multiply them and the result is <b>½ρU³</b>.</p></div>
+        <div class="card coral"><h4>Speed is disproportionately valuable</h4><p>At 2 m/s, the theoretical density is about 4,100 W/m². At 1 m/s it is only about 512 W/m².</p></div>
+        <div class="card amber"><h4>Why modelling quality matters</h4><p>A modest velocity error becomes a much larger power error. Site screening must resolve the current field, not just the tidal range.</p></div>
+      </div>
+    </div>
+    <aside class="notes">Spend time on this equation because it explains the whole project. It is the reason narrow energetic straits dominate the resource map and why velocity validation is more important than a simple water-level map.</aside>
+  </section>
+
+  <!-- ============ 8. FUNNEL HOTSPOTS ============ -->
+  <section>
+    <h3>Geography becomes physics</h3>
+    <h2>Why channels and straits become hotspots</h2>
+    <div class="hotspot-detail">
+      <div class="hotspot-copy">
+        <div class="card coral"><h4>Mass conservation</h4><p><b>Q = A·U</b>. As the cross-sectional area narrows, velocity rises to carry the same volume flux.</p></div>
+        <div class="card"><h4>Depth and drag</h4><p>Deeper channels reduce friction per unit mass. Rough shallow beds dissipate more energy.</p></div>
+        <div class="card amber"><h4>Philippine advantage</h4><p>An archipelago offers many inter-island constrictions where tidal phase differences can create fast, repeatable currents.</p></div>
+        <div class="card"><h4>Read the map with the mechanism</h4><p>The funnel diagram explains why the fastest cells cluster in narrow passages rather than across open shelves.</p></div>
+      </div>
+      <div class="hotspot-visuals">
+        <img src="assets/fig_funnel_effect.svg" alt="Funnel effect in a narrow tidal strait">
+        <img src="assets/fig_max_speed.png" alt="Maximum current speed map">
+      </div>
+    </div>
+    <aside class="notes">Now connect mechanics to geography. The Philippines is not just a convenient case study; its archipelagic geometry creates the constrictions that the equations predict will be energetic.</aside>
+  </section>
+
+  <!-- ============ 9. THE HORIZON ============ -->
+  <section>
+    <h3>Why we are here</h3>
+    <h2>The horizon: a blue economy on a net-zero clock</h2>
+    <div class="stat-band">
+      <div class="stat"><strong>1.2 MW</strong><span>Dragon 12 tidal kite commissioned in 2024</span></div>
+      <div class="stat"><strong>4.5 MW</strong><span>Uldolmok open-sea tidal test site</span></div>
+      <div class="stat"><strong>2 MW</strong><span>European WaveRoller farm in development</span></div>
+    </div>
+    <div class="grid two-col">
+      <div>
+        <div class="card">
+          <h4>Ocean Renewable Energy (ORE) is a real, emerging resource</h4>
+          <p>Tidal (barrage &amp; in-stream), wave, ocean thermal gradient, salinity gradient.</p>
+        </div>
+        <div class="card coral">
+          <h4>Tidal current energy stands out</h4>
+          <p>More <span class="accent">predictable and consistent</span> than wave energy — driven by deterministic astronomical forcing, not weather.</p>
+        </div>
+        <div class="card amber">
+          <h4>The sector is moving</h4>
+          <p>2024 highlights (IEA-OES Annual Report): Minesto's 1.2&nbsp;MW Dragon&nbsp;12 tidal kite grid-connected in the Faroe Islands; a new 4.5&nbsp;MW open-sea tidal test site at Uldolmok, Korea; a first wave-energy farm (2&nbsp;MW, 4×WaveRoller) kicking off in Europe.</p>
+        </div>
+      </div>
+      <div>
+        <div class="card">
+          <h4>But site selection decides everything</h4>
+          <p>Deploying a turbine in a strait that turns out to have weak currents is ruinous. Resource assessment must be <span class="ocean">quantitative, auditable and repeatable</span> before any capital commitment.</p>
+        </div>
+        <div class="card">
+          <h4>Why FOSS4G</h4>
+          <p>The ocean-energy community is global and mixed-resource. Open geospatial software lets small organisations do serious marine spatial planning.</p>
+        </div>
+      </div>
+    </div>
+    <div class="visual-panel" style="margin-top:0.45em">
+      <div class="visual-label">The platform turns a global transition into a spatial question: where can energy, access and coexistence align?</div>
+      <div style="display:flex;justify-content:space-around;align-items:center;color:var(--ocean);font-size:0.48em;font-weight:700"><span>RESOURCE</span><b>→</b><span>CONSTRAINTS</span><b>→</b><span>SUITABILITY</span><b>→</b><span>INVESTMENT</span></div>
+    </div>
+    <div class="ref">IEA-OES, <i>An Overview of Ocean Energy Activities in 2024</i></div>
+    <aside class="notes">
+      Set the scene: net-zero deadlines, a vast untapped resource. Ocean energy types; tidal current is the most predictable. Give the 2024 deployment stats as evidence the field is real. Then pivot: the deciding factor for any project is site selection — and that is fundamentally a geospatial analytics problem.
+    </aside>
+  </section>
+
+  <!-- ============ 3. THE PROBLEM ============ -->
+  <section>
+    <h3>The case for open</h3>
+    <h2>Proprietary geospatial tooling holds ORE development back</h2>
+    <div class="grid two-col">
+      <div>
+        <div class="card coral">
+          <h4>1 · High licence costs</h4>
+          <p>Offshore energy platforms are already capital-heavy; per-seat GIS licences hit exactly the university labs, startups and agencies that do early-stage resource screening.</p>
+        </div>
+        <div class="card coral">
+          <h4>2 · Opaque, "black-box" algorithms</h4>
+          <p>When a suitability map is produced by closed code, an environmental regulator cannot verify <em>why</em> a site was scored the way it was.</p>
+        </div>
+      </div>
+      <div>
+        <div class="card coral">
+          <h4>3 · Licensing lock-in</h4>
+          <p>Results, skills and pipelines become trapped in a vendor ecosystem, making independent review and collaboration harder.</p>
+        </div>
+        <div class="card">
+          <h4>The FOSS4G alternative</h4>
+          <p>Community-driven tools make site-selection workflows <span class="ocean">reproducible, verifiable and free</span> from black-box constraints — and portable across projects and countries.</p>
+        </div>
+      </div>
+    </div>
+    <div class="compare">
+      <div class="closed"><h4 style="color:var(--coral)">Closed workflow</h4><p>Licence fees</p><p>Opaque processing</p><p>Vendor lock-in</p><p>Hard to reproduce</p></div>
+      <div class="open"><h4 style="color:var(--ocean)">FOSS4G workflow</h4><p>Open data + open code</p><p>Inspectable formulas</p><p>Interoperable outputs</p><p>Repeatable by design</p></div>
+    </div>
+    <blockquote>
+      "Choosing open geospatial frameworks is more than a cost-saving measure — it is a commitment to the democratization of technology."
+      <cite>— session abstract</cite>
+    </blockquote>
+    <aside class="notes">
+      The concrete pain: cost, opacity, lock-in. A site-suitability map produced by a proprietary GIS can't be audited by stakeholders. FOSS4G flips this: the algorithm is the license, the source is readable, the pipeline can be rerun by anyone.
+    </aside>
+  </section>
+
+  <!-- ============ 4. CASE STUDY ============ -->
+  <section>
+    <h3>Our running example</h3>
+    <h2>The Philippines: a natural tidal-energy laboratory</h2>
+    <div class="grid two-col">
+      <div>
+        <div class="card">
+          <h4>An archipelago built for tidal current energy</h4>
+          <p>Surrounded by vast ocean, the country's <span class="ocean">channels and straits</span> constrict flow, accelerating currents to exactly the regimes that make tidal in-stream energy conversion (TISEC) attractive.</p>
+        </div>
+        <div class="card amber">
+          <h4>A decade of open-source lineage</h4>
+          <p><b>PhilSHORE</b> (Ang et al.) — "Philippine Sites for Harnessing Ocean Renewable Energy" — a webGIS marine-spatial-planning tool for tidal current resource assessment &amp; site suitability, built on Django, GeoServer, GDAL, Leaflet and D3.js.</p>
+        </div>
+        <div class="card">
+          <h4>Now: <span class="ocean">tidal-oss</span> — a fully open re-implementation</h4>
+          <p>Two-phase workflow: a fast 2D shallow-water screening model (Python/NumPy) feeding a Flask + MapLibre GL JS web map.</p>
+        </div>
+      </div>
+      <div class="center">
+        <img src="assets/fig_max_speed.png" alt="Maximum current speed in the Philippines" class="fig">
+        <div class="fig-cap">Maximum current speed from the screening model — the straits glow with fast, energetic flow.</div>
+      </div>
+    </div>
+    <div class="ref">M.R.C.O. Ang et al., WASET <i>IJMES</i> 9(5) 2015; ISPRS Ann. III-8 (2016)</div>
+    <aside class="notes">
+      Introduce the Philippines as the case study and the intellectual lineage: PhilSHORE was the pioneering webGIS MSP tool. tidal-oss is the current, fully open re-implementation we built to walk through the three phases today. Show the max-current-speed map: the energetic straits are visible.
+    </aside>
+  </section>
+
+  <!-- ============ 5. PHASE 1 intro ============ -->
+  <section>
+    <h3>Phase 1</h3>
+    <h2>Foundational analysis &amp; spatial modelling</h2>
+    <p class="kick">Assembling the marine environment from open data</p>
+    <div class="grid three-col">
+      <div class="card">
+        <h4>Bathymetry</h4>
+        <p><b>GEBCO</b> global gridded elevation (NetCDF) — the shape of the seafloor.</p>
+      </div>
+      <div class="card">
+        <h4>Coastline &amp; boundaries</h4>
+        <p><b>OpenStreetMap</b> coastline and <b>GADM</b> administrative boundaries (Shapefile) for the land mask.</p>
+      </div>
+      <div class="card">
+        <h4>Tidal forcing</h4>
+        <p><b>GOT4.10c / FES2014 / TPXO9</b> harmonic constituents — or a synthetic M2 tide for testing.</p>
+      </div>
+    </div>
+    <div class="visual-panel datapath-panel" style="margin-top:0.45em">
+      <div class="visual-label">A transparent data path from observation to model input</div>
+      <div class="datapath"><span class="chip amber">GEBCO</span><b>→</b><span class="chip ghost">regrid</span><b>→</b><span class="chip amber">GADM · OSM</span><b>→</b><span class="chip ghost">land mask</span><b>→</b><span class="chip ocean">tidal harmonics</span><b>→</b><span class="chip">C-grid</span></div>
+    </div>
+    <div class="grid three-col">
+      <div class="card coral">
+        <h4>Open ingest stack</h4>
+        <p><span class="chip">rasterio</span><span class="chip">fiona</span><span class="chip">xarray</span><span class="chip">numpy</span><span class="chip">netCDF4</span></p>
+      </div>
+      <div class="card coral">
+        <h4>Why it matters</h4>
+        <p>Every input is a published, citable, machine-readable dataset — the analysis can be re-run by anyone, anywhere.</p>
+      </div>
+      <div class="card coral">
+        <h4>No black boxes</h4>
+        <p>Data provenance from <em>source file → grid cell</em> is fully auditable.</p>
+      </div>
+    </div>
+    <aside class="notes">
+      Phase 1 is about the foundations: bathymetry, land, and tidal forcing, all from open data sources, ingested with open libraries. The key property is provenance — every grid cell can be traced back to a published dataset.
+    </aside>
+  </section>
+
+  <!-- ============ 6. PHASE 1 detail ============ -->
+  <section>
+    <h3>Phase 1 · spatial modelling</h3>
+    <h2>From raw data to a computable ocean</h2>
+    <div class="grid fig-right phase1-detail">
+      <div>
+        <div class="card">
+          <h4>Build a structured Arakawa C-grid (~2 km)</h4>
+          <p>Elevation is regridded onto a uniform lon/lat grid; the land mask is carved from GADM; wet cells are marked.</p>
+        </div>
+        <div class="card">
+          <h4>Reconstruct the tide at the boundary</h4>
+          <p class="formula" style="margin:0.35em 0">η(t) = Σ<sub>k</sub> A<sub>k</sub>·cos(ω<sub>k</sub>t + φ<sub>k</sub>)</p>
+          <p>Harmonic constituents M2, S2, K1, O1 are evaluated at open-boundary cells as a time series.</p>
+        </div>
+        <div class="card">
+          <h4>Ready to solve</h4>
+          <p>Depths positive-down, wet/dry perimeter detection, and a CFL-safety-checked time step — the domain is now a numerical experiment, not a picture.</p>
+        </div>
+      </div>
+      <div class="visual-pair">
+        <div class="visual-panel"><img src="assets/fig_bathymetry.png" alt="GEBCO bathymetry regridded to the Philippine domain"><div class="visual-label">Bathymetry and land mask</div></div>
+        <div class="visual-panel"><img src="assets/fig_cgrid.svg" alt="Arakawa C-grid diagram"><div class="visual-label">Staggered C-grid variables</div></div>
+        <div class="fig-cap">The physical ocean becomes a structured, computable domain.</div>
+      </div>
+    </div>
+    <div class="ref">tidal-oss · <code>src/model/grid.py</code> · <code>forcing.py</code></div>
+    <aside class="notes">
+      Walk the concrete steps: regrid GEBCO to a uniform ~2 km Arakawa C-grid; apply the GADM land mask; then reconstruct the tidal elevation at open boundaries from harmonic constituents. Highlight that the domain is a numerical experiment — reproducible by design.
+    </aside>
+  </section>
+
+  <!-- ============ 7. PHASE 2 intro ============ -->
+  <section>
+    <h3>Phase 2</h3>
+    <h2>Advanced analytics &amp; decision support</h2>
+    <p class="kick">Turning raw ocean data into actionable insight</p>
+    <div class="card">
+      <h4>2D depth-averaged shallow-water equations on the C-grid</h4>
+      <p>Forward–backward time stepping with semi-implicit bottom friction, optional Coriolis, advection and horizontal viscosity — a <span class="ocean">~5× speed-up</span> via a numba-JIT fused kernel.</p>
+    </div>
+    <div class="grid three-col">
+      <div class="card">
+        <h4>Spring–neap realism</h4>
+        <p>A <span class="num">15-day</span> run spans at least one full M2+S2 modulation cycle.</p>
+      </div>
+      <div class="card">
+        <h4>Numerical safety</h4>
+        <p>Auto time step from the <b>CFL</b> condition — stability enforced, not hoped for.</p>
+      </div>
+      <div class="card">
+        <h4>The physics in one line</h4>
+        <p class="formula" style="margin:0.3em 0">P = ½ · ρ · |U|³</p>
+        <p>Time-mean kinetic power density — the platform's core metric.</p>
+      </div>
+    </div>
+    <div class="visual-panel timeseries-panel" style="margin-top:0.45em"><img src="assets/fig_timeseries.png" alt="Tidal elevation, speed and power time series"><div class="visual-label">One simulation, three linked signals: elevation → velocity → power.</div></div>
+    <aside class="notes">
+      Phase 2 is where the heavy lifting happens: solve the shallow-water equations on the grid, over a spring–neap cycle, then convert the flow field to power density via P = ½ρ|U|³. Emphasise CFL stability and the validation suite behind the solver.
+    </aside>
+  </section>
+
+  <!-- ============ 8. PHASE 2 detail: hotspots ============ -->
+  <section>
+    <h3>Phase 2 · decision support</h3>
+    <h2>Hotspot screening: where is the resource worth harvesting?</h2>
+    <div class="hotspot-detail">
+      <div class="hotspot-copy">
+        <div class="card">
+          <h4>Time-mean power density over the cycle</h4>
+          <p>Every wet cell is scored with <b>P = ½ρ|U|³</b>, averaged in time.</p>
+        </div>
+        <div class="card coral">
+          <h4>Hotspots = cells with mean P ≥ 200 W/m²</h4>
+          <p>The screening pass exported <span class="num">3,412</span> hotspot features — concentrated in the energetic straits.</p>
+        </div>
+        <div class="card">
+          <h4>Open, interoperable outputs</h4>
+          <p><span class="chip">results.nc</span> time series · <span class="chip">tidal_power_density.tif</span> Cloud-Optimised GeoTIFF · <span class="chip">hotspots.geojson</span> ranked sites</p>
+        </div>
+        <div class="card amber">
+          <h4>From screening to refinement</h4>
+          <p>Top hotspots are queued for high-resolution TELEMAC-2D modelling — a fast, coarse model finds the candidate; an industry-grade model confirms it.</p>
+        </div>
+      </div>
+      <div class="hotspot-visuals">
+        <img src="assets/fig_power_hotspots.png" alt="Tidal power density with hotspots overlay">
+        <img src="assets/distance_to_coast.png" alt="Distance to coast constraint layer">
+      </div>
+      <div class="fig-cap">Resource intensity and practical access are separate layers that can be combined during site screening.</div>
+    </div>
+    <div class="ref">tidal-oss · <code>output/tidal_power_density.tif</code> · <code>hotspots.geojson</code></div>
+    <aside class="notes">
+      Show the power-density map with the hotspot overlay — red outlines mark the cells where the resource is worth pursuing. This is the 'actionable insight' the whole analytics phase produces, exported in three interoperable, open formats. Then mention the screening-to-refinement pipeline with TELEMAC-2D.
+    </aside>
+  </section>
+
+  <!-- ============ 9. PHASE 2 detail: turbines ============ -->
+  <section>
+    <h3>Phase 2 · decision support</h3>
+    <h2>Site–device matching: energy, yield and capacity factor</h2>
+    <div class="grid two-col">
+      <div>
+        <div class="card">
+          <h4>The PhilSHORE idea, taken further</h4>
+          <p>From 140+ tidal in-stream devices worldwide, shortlist the actively-developed fleet (IRENA) — then match each device to each site's flow regime.</p>
+        </div>
+        <div class="card coral">
+          <h4>turbine performance modelling</h4>
+          <p>The platform models the <span class="accent">top-10 real tidal turbines</span>: power curve → energy, capacity factor, and annual energy production per site.</p>
+        </div>
+        <div class="card amber">
+          <h4>Decision metrics</h4>
+          <p>Filtered-domain resource totals: AEP and MW — directly comparable across candidate sites and device classes.</p>
+        </div>
+      </div>
+      <div>
+        <div class="card">
+          <h4>API endpoints power the dashboard</h4>
+          <p><span class="chip">/api/turbines</span><span class="chip">/api/turbine_performance</span><span class="chip">/api/resource</span><span class="chip">/api/area_stats</span></p>
+        </div>
+        <div class="card">
+          <h4>Reproducible by construction</h4>
+          <p>The same formulas, the same data, the same code — a stakeholder can re-derive every number.</p>
+        </div>
+      </div>
+    </div>
+    <div class="visual-grid turbine-visuals" style="margin-top:0.35em">
+      <img src="assets/fig_turbine_curves.png" alt="Turbine power curves">
+      <img src="assets/fig_turbine_fleet.png" alt="Turbine rated power comparison">
+      <div class="fig-cap">A device is not just a symbol on a map: its cut-in speed, rated speed and power curve change the yield.</div>
+    </div>
+    <div class="visual-panel mcda-panel" style="margin-top:0.35em"><img src="assets/fig_mcda.svg" alt="Multi-criteria decision workflow" style="width:100%"></div>
+    <div class="ref">tidal-oss · <code>src/web/app.py</code> turbine endpoints</div>
+    <aside class="notes">
+      Extend the analytics: site–device matching, from PhilSHORE's device database concept to an actual turbine-performance model for the top-10 real devices. The output feeds decision metrics — capacity factor, AEP — served through the API so every figure is reproducible.
+    </aside>
+  </section>
+
+  <!-- ============ 10. PHASE 3: visualization ============ -->
+  <section>
+    <h3>Phase 3</h3>
+    <h2>Visualization &amp; global democratization</h2>
+    <p class="kick">Interactive, browser-based layers anyone can use</p>
+    <div class="grid fig-right webgis-slide">
+      <div class="webgis-copy">
+        <div class="card">
+          <h4>Cloud-Optimised GeoTIFFs, served as tiles</h4>
+          <p>Colormapped raster tiles stream straight from the COG — no server-side raster stack required.</p>
+        </div>
+        <div class="card">
+          <h4>Flask REST API + MapLibre GL JS</h4>
+          <p><span class="chip">/api/layers</span><span class="chip">/api/tiles</span><span class="chip">/api/query</span><span class="chip">/api/timeseries</span><span class="chip">/api/area_stats</span></p>
+          <p>Multi-layer overlays: power density, max current speed, bathymetry, distance to coast.</p>
+        </div>
+        <div class="card coral">
+          <h4>From map to decision</h4>
+          <p>Click-to-query tidal curves (Chart.js), polygon site assessment, ranked hotspots, filtered resource screening.</p>
+        </div>
+        <div class="card amber">
+          <h4>Accessible by design</h4>
+          <p>No high-end hardware, no desktop licence — <span class="ocean">stakeholders, agencies and the public</span> see the same evidence.</p>
+        </div>
+      </div>
+      <div class="webgis-figure">
+        <img src="assets/fig_webgis.png" alt="Screenshot of the MapLibre marine spatial planning web tool" class="fig">
+        <div class="fig-cap">The live MapLibre GL JS MSP tool: interactive power-density layer over the Philippine seas.</div>
+      </div>
+    </div>
+    <div class="ref">tidal-oss · <code>src/web/</code> (Flask + MapLibre GL JS)</div>
+    <aside class="notes">
+      Phase 3 is accessibility. The heavy model results become interactive browser layers. Emphasise that the COG + Flask + MapLibre stack means the 'dashboard' is a web page — usable by a regulator, a fishing cooperative, or a policymaker, with no special software.
+    </aside>
+  </section>
+
+  <!-- ============ 11. THE FULL STACK ============ -->
+  <section>
+    <h3>The whole picture</h3>
+    <h2>One platform, end-to-end FOSS4G</h2>
+    <svg viewBox="0 0 1180 500" width="100%" class="stack" role="img" aria-label="End-to-end FOSS4G stack diagram">
+      <defs>
+        <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+          <path d="M0,0 L8,3 L0,6 z" fill="#7f9aa8"></path>
+        </marker>
+      </defs>
+      <!-- Layer 1: open data -->
+      <rect x="20" y="20" width="1140" height="72" class="box title"></rect>
+      <text x="40" y="64" class="t">Open data</text>
+      <rect x="330" y="34" width="150" height="44" class="box data"></rect><text x="405" y="61" text-anchor="middle">GEBCO</text>
+      <rect x="500" y="34" width="150" height="44" class="box data"></rect><text x="575" y="61" text-anchor="middle">GADM · OSM</text>
+      <rect x="670" y="34" width="180" height="44" class="box data"></rect><text x="760" y="61" text-anchor="middle">GOT/FES/TPXO</text>
+      <rect x="870" y="34" width="120" height="44" class="box data"></rect><text x="930" y="61" text-anchor="middle">NetCDF</text>
+      <!-- Layer 2: ingest -->
+      <rect x="20" y="120" width="1140" height="72" class="box title"></rect>
+      <text x="40" y="164" class="t">Ingest &amp; model</text>
+      <rect x="330" y="134" width="210" height="44" class="box alg"></rect><text x="435" y="161" text-anchor="middle">rasterio · fiona · xarray</text>
+      <rect x="560" y="134" width="300" height="44" class="box alg"></rect><text x="710" y="161" text-anchor="middle">ShallowWaterSolver (NumPy/numba)</text>
+      <!-- Layer 3: outputs -->
+      <rect x="20" y="220" width="1140" height="72" class="box title"></rect>
+      <text x="40" y="264" class="t">Open outputs</text>
+      <rect x="330" y="234" width="180" height="44" class="box out"></rect><text x="420" y="261" text-anchor="middle">results.nc</text>
+      <rect x="530" y="234" width="280" height="44" class="box out"></rect><text x="670" y="261" text-anchor="middle">tidal_power_density.tif (COG)</text>
+      <rect x="830" y="234" width="190" height="44" class="box out"></rect><text x="925" y="261" text-anchor="middle">hotspots.geojson</text>
+      <!-- Layer 4: web -->
+      <rect x="20" y="320" width="1140" height="72" class="box title"></rect>
+      <text x="40" y="364" class="t">Web</text>
+      <rect x="330" y="334" width="260" height="44" class="box alg"></rect><text x="460" y="361" text-anchor="middle">Flask REST API</text>
+      <rect x="610" y="334" width="260" height="44" class="box alg"></rect><text x="740" y="361" text-anchor="middle">MapLibre GL JS</text>
+      <!-- Layer 5: people -->
+      <rect x="20" y="420" width="1140" height="60" class="box title"></rect>
+      <text x="40" y="458" class="t">Democratization</text>
+      <text x="760" y="458" class="muted">stakeholders · regulators · the public</text>
+      <!-- arrows -->
+      <path d="M 40 92 L 40 120" class="arrow"></path>
+      <path d="M 40 192 L 40 220" class="arrow"></path>
+      <path d="M 40 292 L 40 320" class="arrow"></path>
+      <path d="M 40 392 L 40 420" class="arrow"></path>
+      <path d="M 600 192 L 600 220" class="arrow"></path>
+    </svg>
+    <p class="small" style="margin-top:0.3em">
+      <span class="chip">MIT licence</span><span class="chip ocean">CI: ruff · mypy · pytest</span><span class="chip ghost">validation: seiche · M2 channel · mass conservation</span>
+    </p>
+    <aside class="notes">
+      The full stack in one picture: open data, open ingest and modelling, open outputs, an open web tier, and finally people. Every arrow is a reproducible step; every layer is MIT-licensed. CI gates keep the science honest — a test suite validates the physics.
+    </aside>
+  </section>
+
+  <!-- ============ 12. TRANSPARENCY ============ -->
+  <section>
+    <h3>Why this matters</h3>
+    <h2>Transparency &amp; reproducibility as engineering policy</h2>
+    <div class="grid three-col">
+      <div class="card">
+        <h4>Open licence</h4>
+        <p>MIT-licensed code — every formula, solver and API endpoint is readable and reusable.</p>
+      </div>
+      <div class="card">
+        <h4>Open data</h4>
+        <p>GEBCO, GADM, OSM and global tidal databases — citable, downloadable, re-derivable.</p>
+      </div>
+      <div class="card">
+        <h4>Automated verification</h4>
+        <p>Lint, type-check and tests in CI: physical validation (seiche period, M2 channel phase, mass conservation) runs on every change.</p>
+      </div>
+    </div>
+    <div class="card coral">
+      <h4>No black boxes — by construction</h4>
+      <p>A regulator can answer three questions that matter most: <span class="accent">Where?</span> <span class="accent">Why there?</span> <span class="accent">How do I check?</span></p>
+    </div>
+    <div class="stat-band" style="margin-top:0.55em">
+      <div class="stat"><strong>Where?</strong><span>mapped resource and constraints</span></div>
+      <div class="stat"><strong>Why there?</strong><span>explicit criteria and weights</span></div>
+      <div class="stat"><strong>How check?</strong><span>open data, code and tests</span></div>
+    </div>
+    <blockquote>
+      "Open geospatial frameworks empower organizations of all sizes to contribute to a sustainable future without being tethered to restrictive software licensing."
+      <cite>— session abstract</cite>
+    </blockquote>
+    <aside class="notes">
+      Bring it together: licence, data, and CI are the three pillars of the transparency story. The punchline — for an energy regulator, the three questions that matter are where, why there, and how to check. An open platform answers all three.
+    </aside>
+  </section>
+
+  <!-- ============ 13. LIMITATIONS & NEXT ============ -->
+  <section>
+    <h3>Honesty about the gaps</h3>
+    <h2>Current limits &amp; the road ahead</h2>
+    <div class="grid two-col">
+      <div>
+        <div class="card amber">
+          <h4>Screening resolution</h4>
+          <p>The coarse ~2 km model finds hotspots; it cannot resolve turbine-scale flow.</p>
+        </div>
+        <div class="card amber">
+          <h4>Static forcing</h4>
+          <p>Harmonics are reconstructed offline — not yet live forecasts.</p>
+        </div>
+        <div class="card amber">
+          <h4>Physical criteria only</h4>
+          <p>Economic screening (depth filters, distance-to-grid) is still to come.</p>
+        </div>
+      </div>
+      <div>
+        <div class="card">
+          <h4>1 · TELEMAC-2D refinement</h4>
+          <p>High-resolution finite-element modelling of the top hotspots, driven by screening results.</p>
+        </div>
+        <div class="card">
+          <h4>2 · Real-time tidal forecasting</h4>
+          <p>Live boundary feeds for operational, day-ahead resource prediction.</p>
+        </div>
+        <div class="card">
+          <h4>3 · Economic &amp; multi-criteria modules</h4>
+          <p>Depth, grid distance and socio-environmental constraints — completing the MCDA promise of the PhilSHORE framework.</p>
+        </div>
+      </div>
+    </div>
+    <div class="visual-panel roadmap-panel" style="margin-top:0.55em"><img src="assets/fig_roadmap.svg" alt="Open development roadmap" style="width:100%"></div>
+    <aside class="notes">
+      Be honest about limits: coarse screening, static forcing, physics-only. Then the roadmap: TELEMAC-2D refinement, real-time forecasting, and economic/multi-criteria modules that complete the original PhilSHORE vision.
+    </aside>
+  </section>
+
+  <!-- ============ 14. CONCLUSION ============ -->
+  <section class="title-slide">
+    <h3 class="center" style="text-align:center">The takeaway</h3>
+    <h1 style="text-align:center">Open geospatial software is the enabling layer<br>for ocean renewable energy</h1>
+    <div class="rule" style="margin-left:auto;margin-right:auto"></div>
+    <div class="grid three-col" style="margin-top:0.6em">
+      <div class="card">
+        <h4 class="center" style="text-align:center">Model</h4>
+        <p class="center" style="text-align:center">Reproducible spatial analysis on open data</p>
+      </div>
+      <div class="card">
+        <h4 class="center" style="text-align:center">Decide</h4>
+        <p class="center" style="text-align:center">Standardised physics as automated decision support</p>
+      </div>
+      <div class="card">
+        <h4 class="center" style="text-align:center">Democratize</h4>
+        <p class="center" style="text-align:center">Browser dashboards for every stakeholder</p>
+      </div>
+    </div>
+    <p class="small center" style="text-align:center; margin-top:1em">
+      tidal-oss · github · FOSS4G stack: GEBCO · GADM · OSM · GOT4.10c · rasterio · fiona · xarray · numpy · numba · Flask · MapLibre GL JS
+    </p>
+    <p class="small center" style="text-align:center; margin-top:0.2em">
+      References: Ang et al. 2015 (WASET) · Ang et al. 2016 (ISPRS) · IEA-OES Annual Report 2024
+    </p>
+    <p class="subtitle center" style="text-align:center; margin-top:0.5em">Thank you — questions welcome</p>
+    <aside class="notes">
+      Close with the three-word arc: Model, Decide, Democratize. The platform shows that a fully open geospatial stack — from GEBCO bathymetry to a MapLibre browser dashboard — can deliver credible, auditable ocean energy planning. Invite questions.
+    </aside>
+  </section>
+
+</div>
+</div>
+
+<script src="assets/vendor/reveal/dist/reveal.js"></script>
+<script src="assets/vendor/reveal/plugin/notes/notes.js"></script>
+<script>
+  Reveal.initialize({
+    hash: true,
+    width: 1280,
+    height: 720,
+    margin: 0.045,
+    minScale: 0.25,
+    maxScale: 1.6,
+    slideNumber: 'c/t',
+    controls: true,
+    progress: true,
+    transition: 'slide',
+    plugins: [RevealNotes]
+  });
+</script>
+</body>
+</html>
