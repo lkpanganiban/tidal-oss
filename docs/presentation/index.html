@@ -44,19 +44,21 @@
   .reveal .fig-right { grid-template-columns: 1.15fr 1fr; align-items: center; }
   .reveal .three-col { grid-template-columns: 1fr 1fr 1fr; }
   .reveal .fig { border-radius: 8px; box-shadow: 0 6px 24px rgba(11,60,93,0.18); width: 100%; }
-  .reveal .fig-cap { font-size: 0.36em; color: var(--muted); margin-top: 0.4em; text-align: center; }
+  .reveal .fig-cap { font-size: 0.44em; color: var(--muted); margin-top: 0.4em; text-align: center; }
   .reveal .formula { font-family: Georgia, serif; font-style: italic; font-size: 0.95em; color: var(--deep); background: #edf6f9; border: 1px dashed var(--aqua); border-radius: 12px; padding: 0.5em 0.8em; text-align: center; margin: 0.6em 0; }
   .reveal .chip { display: inline-block; background: var(--deep); color: #fff; border-radius: 999px; padding: 0.08em 0.7em; font-size: 0.42em; font-weight: 600; margin: 0.12em 0.3em 0.12em 0; }
   .reveal .chip.ocean { background: var(--ocean); }
   .reveal .chip.coral { background: var(--coral); }
   .reveal .chip.amber { background: var(--amber); color: #3a2c00; }
   .reveal .chip.ghost { background: #e6eef2; color: var(--deep); }
+  .reveal .card .chip, .reveal .small .chip { font-size: 1em; padding: 0.06em 0.6em; }
   .reveal .datapath { display: flex; align-items: center; justify-content: space-between; font-size: 0.56em; font-weight: 700; color: var(--deep); }
   .reveal .datapath .chip { font-size: 0.9em; padding: 0.1em 0.65em; }
+  .reveal .datapath b { font-size: 1.7em; color: var(--coral); }
   .reveal .datapath-panel { padding: 0.3em 0.7em; }
   .reveal .datapath-panel .visual-label { font-size: 0.4em; }
   .reveal .num { color: var(--coral); font-weight: 800; }
-  .reveal .ref { position: fixed; bottom: 14px; right: 20px; font-size: 0.30em; color: #93a7b3; background: rgba(251,253,255,0.85); padding: 0.15em 0.7em; border-radius: 999px; }
+  .reveal .ref { position: fixed; bottom: 14px; right: 20px; font-size: 0.38em; color: #93a7b3; background: rgba(251,253,255,0.85); padding: 0.15em 0.7em; border-radius: 999px; }
   .reveal .progress { color: var(--aqua); }
   .reveal .progress span { background: var(--aqua); }
   .reveal .slide-number { color: var(--ocean); font-size: 0.35em; }
@@ -73,11 +75,11 @@
   .stack .box.alg  { fill: #edf6f9; stroke: var(--aqua); }
   .stack .box.out  { fill: #fdf5f1; stroke: var(--coral); }
   .stack .arrow { stroke: #7f9aa8; stroke-width: 2; fill: none; marker-end: url(#arrow); }
-  .reveal .footnote { font-size: 0.34em; color: var(--muted); margin-top: 0.5em; }
+  .reveal .footnote { font-size: 0.42em; color: var(--muted); margin-top: 0.5em; }
   .reveal .visual-panel { background: #fff; border: 1px solid #d9e6ec; border-radius: 12px; padding: 0.28em; box-shadow: 0 6px 24px rgba(11,60,93,0.12); }
   .reveal .visual-panel img { display: block; width: 100%; max-height: 245px; object-fit: contain; border-radius: 8px; }
   .reveal .visual-panel svg { display: block; width: 100%; max-height: 245px; }
-  .reveal .visual-label { font-size: 0.34em; color: var(--muted); text-align: center; margin: 0.25em 0 0.05em; }
+  .reveal .visual-label { font-size: 0.42em; color: var(--muted); text-align: center; margin: 0.25em 0 0.05em; }
   .reveal .visual-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 0.35em; align-items: center; }
   .reveal .visual-pair img, .reveal .visual-pair svg { min-width: 0; }
   .reveal .stat-band { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5em; margin: 0.55em 0; }
@@ -99,18 +101,18 @@
   .reveal .diagram-inline-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6em; align-items: stretch; }
   .reveal .diagram-inline-pair img { width: 100%; height: 220px; max-height: none; object-fit: contain; }
   .reveal .phase1-detail { grid-template-columns: 0.82fr 1.38fr; }
-  .reveal .phase1-detail .visual-pair img, .reveal .phase1-detail .visual-pair svg { max-height: 245px; }
+  .reveal .phase1-detail .visual-pair img, .reveal .phase1-detail .visual-pair svg { max-height: 285px; }
   .reveal .hotspot-detail { display: block; }
   .reveal .hotspot-copy { display: grid; grid-template-columns: 1fr 1fr; column-gap: 1.2em; }
   .reveal .hotspot-visuals { display: grid; grid-template-columns: 1fr 1fr; gap: 0.7em; align-items: start; margin-top: 0.45em; }
-  .reveal .hotspot-visuals img { width: 100%; height: 200px; max-height: none; object-fit: contain; border-radius: 9px; box-shadow: 0 4px 18px rgba(11,60,93,0.14); }
+  .reveal .hotspot-visuals img { width: 100%; height: 255px; max-height: none; object-fit: contain; border-radius: 9px; box-shadow: 0 4px 18px rgba(11,60,93,0.14); }
   .reveal .mcda-panel img { height: 130px; max-height: none !important; object-fit: contain; }
   .reveal .roadmap-panel img { height: 150px; max-height: none !important; object-fit: contain; }
-  .reveal .turbine-visuals img { max-height: 190px; }
+  .reveal .turbine-visuals img { max-height: 215px; }
   .reveal .webgis-slide { grid-template-columns: 1fr 1fr; }
   .reveal .webgis-copy { display: grid; grid-template-columns: 1fr 1fr; column-gap: 0.7em; align-items: start; }
   .reveal .webgis-figure { display: flex; flex-direction: column; align-items: center; }
-  .reveal .webgis-figure .fig { width: 100%; max-height: 700px; height: auto; object-fit: contain; }
+  .reveal .webgis-figure .fig { width: 100%; max-height: 460px; height: auto; object-fit: contain; }
   .reveal .timeseries-panel img { width: 100%; height: 200px; max-height: none !important; object-fit: contain; }
   .reveal blockquote { font-size: 0.5em; color: var(--deep); border-left: 6px solid var(--coral); background: #fdf5f1; padding: 0.4em 0.9em; border-radius: 6px; font-style: italic; margin: 0.5em 0; }
   .reveal blockquote cite { display: block; font-size: 0.85em; color: var(--muted); margin-top: 0.3em; font-style: normal; }
@@ -196,7 +198,7 @@
     <h3>Predictability has a rhythm</h3>
     <h2>M₂ and S₂ beat into the spring–neap cycle</h2>
     <div class="grid two-col resource-intro">
-      <div class="visual-panel"><img src="assets/fig_spring_neap.png" alt="M2 and S2 harmonics forming the spring-neap cycle"></div>
+      <div class="visual-panel diagram-panel"><img src="assets/fig_spring_neap.png" alt="M2 and S2 harmonics forming the spring-neap cycle"></div>
       <div>
         <div class="card coral"><h4>Spring tide</h4><p>M₂ and S₂ are in phase. Tidal range and current speeds are highest.</p></div>
         <div class="card"><h4>Neap tide</h4><p>The constituents move out of phase. The current envelope contracts.</p></div>
@@ -271,6 +273,41 @@
       </div>
     </div>
     <aside class="notes">Now connect mechanics to geography. The Philippines is not just a convenient case study; its archipelagic geometry creates the constrictions that the equations predict will be energetic.</aside>
+  </section>
+
+  <!-- ============ 8B. PHILIPPINES GEOGRAPHY ============ -->
+  <section>
+    <h3>The subject area</h3>
+    <h2>The Philippines: an archipelago built for ocean energy</h2>
+    <div class="grid two-col">
+      <div>
+        <div class="card">
+          <h4>7,641 islands, 36,289 km of coastline</h4>
+          <p>One of the world's great archipelagos, ringed by deep ocean basins — the Pacific, South China, Sulu and Celebes seas.</p>
+        </div>
+        <div class="card coral">
+          <h4>Island constrictions accelerate the tide</h4>
+          <p>Hundreds of inter-island straits and passages squeeze the same volume flux through narrow cross-sections: <b>Q = A·U</b>, so the currents speed up.</p>
+        </div>
+        <div class="card amber">
+          <h4>Phase differences drive the flow</h4>
+          <p>Basins on either side of a passage are forced out of phase, so water must surge through the gaps — fast, predictable, repeatable currents.</p>
+        </div>
+      </div>
+      <div class="center">
+        <img src="assets/fig_max_speed.png" alt="Maximum current speed in the Philippines" class="fig" style="max-height:440px;width:auto">
+        <div class="fig-cap">The fast cells cluster exactly where the islands pinch the flow.</div>
+      </div>
+    </div>
+    <div class="stat-band">
+      <div class="stat"><strong>7,641</strong><span>islands in the archipelago</span></div>
+      <div class="stat"><strong>36,289 km</strong><span>coastline — energy close to demand</span></div>
+      <div class="stat"><strong>Hundreds</strong><span>of inter-island straits &amp; passages</span></div>
+    </div>
+    <div class="ref">NAMRIA: 7,641 islands · ~36,289 km coastline</div>
+    <aside class="notes">
+      Shift from the general mechanics to the actual subject area. The Philippines is geographically predisposed to tidal current energy: thousands of islands, deep surrounding basins, and inter-island straits where phase differences force fast, repeatable currents. This is precisely the constriction effect the funnel equation predicts — and it is why the country runs through this whole study as the natural place to test a FOSS4G marine spatial planning platform.
+    </aside>
   </section>
 
   <!-- ============ 9. THE HORIZON ============ -->

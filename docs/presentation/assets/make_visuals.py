@@ -9,6 +9,16 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")
+matplotlib.rcParams.update(
+    {
+        "font.size": 15,
+        "axes.titlesize": 19,
+        "axes.labelsize": 15,
+        "xtick.labelsize": 13,
+        "ytick.labelsize": 13,
+        "legend.fontsize": 12,
+    }
+)
 import matplotlib.pyplot as plt
 import numpy as np
 import rasterio
@@ -64,13 +74,13 @@ def timeseries_figure() -> None:
     speed = np.sqrt(uc**2 + vc**2)
     mean_power = np.nanmean(power[:, row, col])
 
-    fig, axes = plt.subplots(3, 1, figsize=(14.0, 5.8), sharex=True)
+    fig, axes = plt.subplots(3, 1, figsize=(9.0, 3.75), sharex=True)
     color = "#0e7490"
     axes[0].plot(time_h, eta[:, row, col], color="#e76f51", linewidth=2)
     axes[0].set_ylabel("η (m)")
     axes[0].set_title(
         f"Model time series at energetic cell {lon[row, col]:.2f}°E, {lat[row, col]:.2f}°N",
-        loc="left", fontsize=14, fontweight="bold", color="#0b3c5d",
+        loc="left", fontsize=18, fontweight="bold", color="#0b3c5d",
     )
     axes[1].plot(time_h, speed, color=color, linewidth=2)
     axes[1].set_ylabel("Speed (m/s)")
@@ -78,38 +88,38 @@ def timeseries_figure() -> None:
     axes[2].axhline(200, color="#e76f51", linestyle="--", linewidth=1.2, label="200 W/m² screen")
     axes[2].set_ylabel("Power (W/m²)")
     axes[2].set_xlabel("Simulation time (hours)")
-    axes[2].legend(frameon=False, fontsize=8, loc="upper right")
+    axes[2].legend(frameon=False, fontsize=13, loc="upper right")
     for ax in axes:
         ax.grid(alpha=0.2)
         ax.spines[["top", "right"]].set_visible(False)
-    fig.text(0.98, 0.02, f"Mean power density: {mean_power:.1f} W/m²", ha="right", color="#5a707e", fontsize=9)
+    fig.text(0.98, 0.02, f"Mean power density: {mean_power:.1f} W/m²", ha="right", color="#5a707e", fontsize=13)
     save(fig, "fig_timeseries.png")
 
 
 def turbine_figure() -> None:
     speeds = np.linspace(0, 4.8, 160)
-    fig, ax = plt.subplots(figsize=(8.4, 5.5))
+    fig, ax = plt.subplots(figsize=(5.2, 3.4))
     colors = plt.cm.viridis(np.linspace(0.05, 0.92, len(TURBINES)))
     for turbine, color in zip(TURBINES, colors):
         values = [power_kw(turbine, float(speed)) for speed in speeds]
-        ax.plot(speeds, values, color=color, linewidth=1.8, label=turbine["name"])
-    ax.set_title("Power curves across the curated turbine fleet", loc="left", fontsize=15, fontweight="bold", color="#0b3c5d")
+        ax.plot(speeds, values, color=color, linewidth=2.2, label=turbine["name"])
+    ax.set_title("Power curves across the curated turbine fleet", loc="left", fontsize=18, fontweight="bold", color="#0b3c5d")
     ax.set_xlabel("Current speed (m/s)")
     ax.set_ylabel("Electrical output (kW)")
     ax.grid(alpha=0.2)
     ax.spines[["top", "right"]].set_visible(False)
-    ax.legend(ncol=2, fontsize=7.5, frameon=False, loc="upper left")
+    ax.legend(ncol=2, fontsize=12, frameon=False, loc="upper left")
     save(fig, "fig_turbine_curves.png")
 
     rated = [t["rated_power_kw"] for t in TURBINES]
     rated_speeds = [rated_speed_mps(t) for t in TURBINES]
     labels = [t["name"] for t in TURBINES]
     order = np.argsort(rated)
-    fig, ax = plt.subplots(figsize=(8.4, 5.2))
+    fig, ax = plt.subplots(figsize=(5.2, 3.2))
     bars = ax.barh(np.array(labels)[order], np.array(rated)[order], color="#0e7490")
     for bar, speed in zip(bars, np.array(rated_speeds)[order]):
-        ax.text(bar.get_width() + 35, bar.get_y() + bar.get_height() / 2, f"{speed:.2f} m/s", va="center", fontsize=8)
-    ax.set_title("Rated power and derived rated speed", loc="left", fontsize=15, fontweight="bold", color="#0b3c5d")
+        ax.text(bar.get_width() + 35, bar.get_y() + bar.get_height() / 2, f"{speed:.2f} m/s", va="center", fontsize=11)
+    ax.set_title("Rated power and derived rated speed", loc="left", fontsize=18, fontweight="bold", color="#0b3c5d")
     ax.set_xlabel("Rated power (kW)")
     ax.grid(axis="x", alpha=0.2)
     ax.spines[["top", "right"]].set_visible(False)
@@ -122,34 +132,34 @@ def physics_figures() -> None:
     m2 = np.sin(2 * np.pi * hours / 12.42)
     s2 = 0.35 * np.sin(2 * np.pi * hours / 12.0)
     combined = m2 + s2
-    fig, axes = plt.subplots(2, 1, figsize=(9.0, 5.7), sharex=True)
+    fig, axes = plt.subplots(2, 1, figsize=(6.5, 4.1), sharex=True)
     axes[0].plot(hours, m2, label="M₂ · 12.42 h", color="#0e7490")
     axes[0].plot(hours, s2, label="S₂ · 12.00 h", color="#f4a261")
     axes[0].plot(hours, combined, label="combined tide", color="#0b3c5d", linewidth=2)
     axes[0].set_ylabel("Relative elevation")
-    axes[0].legend(ncol=3, frameon=False, fontsize=8)
+    axes[0].legend(ncol=3, frameon=False, fontsize=11)
     axes[1].plot(hours, np.abs(combined), color="#e76f51", linewidth=1.8)
     axes[1].fill_between(hours, np.abs(combined), color="#e76f51", alpha=0.16)
     axes[1].axvspan(0, 24 * 3.7, color="#f4a261", alpha=0.10, label="spring tide")
     axes[1].axvspan(24 * 7.3, 24 * 11.0, color="#1aa7c4", alpha=0.08, label="neap transition")
     axes[1].set_ylabel("Current envelope")
     axes[1].set_xlabel("Days since start")
-    axes[1].legend(frameon=False, fontsize=8, loc="upper right")
+    axes[1].legend(frameon=False, fontsize=11, loc="upper right")
     for ax in axes:
         ax.grid(alpha=0.2)
         ax.spines[["top", "right"]].set_visible(False)
-    axes[0].set_title("Tidal constituents beat into a 14.77-day spring–neap cycle", loc="left", fontsize=14, fontweight="bold", color="#0b3c5d")
+    axes[0].set_title("Tidal constituents beat into a 14.77-day spring–neap cycle", loc="left", fontsize=17, fontweight="bold", color="#0b3c5d")
     save(fig, "fig_spring_neap.png")
 
     speeds = np.linspace(0, 3.2, 160)
     power = 0.5 * 1025.0 * speeds**3
-    fig, ax = plt.subplots(figsize=(8.3, 5.2))
+    fig, ax = plt.subplots(figsize=(6.0, 3.75))
     ax.plot(speeds, power, color="#e76f51", linewidth=3)
     for speed in (1.0, 2.0, 3.0):
         value = 0.5 * 1025.0 * speed**3
         ax.scatter([speed], [value], color="#0b3c5d", zorder=3)
-        ax.annotate(f"{speed:.0f} m/s\n{value:.0f} W/m²", (speed, value), xytext=(8, 8), textcoords="offset points", fontsize=9)
-    ax.set_title("Why current speed matters: power scales with U³", loc="left", fontsize=15, fontweight="bold", color="#0b3c5d")
+        ax.annotate(f"{speed:.0f} m/s\n{value:.0f} W/m²", (speed, value), xytext=(8, 8), textcoords="offset points", fontsize=12)
+    ax.set_title("Why current speed matters: power scales with U³", loc="left", fontsize=18, fontweight="bold", color="#0b3c5d")
     ax.set_xlabel("Current speed U (m/s)")
     ax.set_ylabel("Theoretical power density (W/m²)")
     ax.grid(alpha=0.2)
