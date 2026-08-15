@@ -139,6 +139,50 @@
     </aside>
   </section>
 
+  <!-- ============ 1B. AGENDA ============ -->
+  <section>
+    <h3>Today's route</h3>
+    <h2>Agenda</h2>
+    <div class="grid two-col">
+      <div>
+        <div class="card">
+          <h4>1 · The resource &amp; the physics</h4>
+          <p>Tidal current energy · astronomical forcing &amp; spring–neap · the shallow-water link · the cubic law.</p>
+        </div>
+        <div class="card">
+          <h4>2 · Why open geospatial</h4>
+          <p>What proprietary tooling costs the ocean-energy sector — and why FOSS4G changes the calculus.</p>
+        </div>
+        <div class="card">
+          <h4>3 · The platform, in three phases</h4>
+          <p><b>Phase 1</b> — foundational analysis &amp; spatial modelling (open data → C-grid)<br>
+          <b>Phase 2</b> — advanced analytics &amp; decision support (solver → hotspots → turbines)<br>
+          <b>Phase 3</b> — visualization &amp; democratization (Flask + MapLibre in the browser)</p>
+        </div>
+      </div>
+      <div>
+        <div class="card">
+          <h4>4 · One platform, end-to-end FOSS4G</h4>
+          <p>The full stack from open data to stakeholders, with transparency &amp; reproducibility as engineering policy.</p>
+        </div>
+        <div class="card">
+          <h4>5 · Limits &amp; the road ahead</h4>
+          <p>Honest about the gaps: TELEMAC-2D refinement, real-time forecasting, economic &amp; multi-criteria modules.</p>
+        </div>
+        <div class="card coral">
+          <h4>6 · The takeaway</h4>
+          <p>Open geospatial software is the enabling layer for ocean renewable energy.</p>
+        </div>
+      </div>
+    </div>
+    <div class="datapath" style="margin-top:0.45em">
+      <span class="chip ghost">physics</span><b>→</b><span class="chip ghost">problem</span><b>→</b><span class="chip ocean">platform</span><b>→</b><span class="chip ghost">stack</span><b>→</b><span class="chip amber">limits</span><b>→</b><span class="chip coral">takeaway</span>
+    </div>
+    <aside class="notes">
+      Set expectations. The talk moves from the physical resource, to the case for open geospatial tooling, to a three-phase platform build (model → decide → democratize), then honesty about limits and the road ahead, closing with the takeaway.
+    </aside>
+  </section>
+
   <!-- ============ 2. TIDAL CURRENT ENERGY ============ -->
   <section>
     <h3>Start with the resource</h3>
@@ -295,7 +339,7 @@
         </div>
       </div>
       <div class="center">
-        <img src="assets/fig_max_speed.png" alt="Maximum current speed in the Philippines" class="fig" style="max-height:440px;width:auto">
+        <img src="assets/fig_max_speed.png" alt="Maximum current speed in the Philippines" class="fig" style="max-height:370px;width:auto">
         <div class="fig-cap">The fast cells cluster exactly where the islands pinch the flow.</div>
       </div>
     </div>
@@ -605,6 +649,98 @@
     </aside>
   </section>
 
+  <!-- ============ 9B. MARINE SPATIAL PLANNING INTRO ============ -->
+  <section>
+    <h3>The decision layer</h3>
+    <h2>Marine spatial planning: putting the resource into a plan</h2>
+    <div class="grid two-col">
+      <div>
+        <div class="card coral">
+          <h4>What is marine spatial planning (MSP)?</h4>
+          <p>A public, data-driven process that <span class="ocean">allocates the use of ocean space</span> — balancing energy, shipping, fishing, conservation and communities over time.</p>
+        </div>
+        <div class="card">
+          <h4>From a resource map to a site decision</h4>
+          <p>A hotspot map shows <b>where the energy is</b>. MSP adds the other half of the question: <b>where should we put it?</b> — overlaying constraints, uses and values on the same sea.</p>
+        </div>
+      </div>
+      <div>
+        <div class="card">
+          <h4>Why MSP matters for ocean renewable energy</h4>
+          <p><b>De-risks investment</b> — transparent, repeatable siting evidence before capital is committed.<br>
+          <b>Resolves conflicts early</b> — shipping lanes, fishing grounds, protected areas and defence zones are made visible, not discovered later.<br>
+          <b>Accelerates licensing</b> — regulators review the same open evidence a developer used.<br>
+          <b>Unlocks co-existence</b> — energy arrays alongside aquaculture, transport corridors and ecosystems.</p>
+        </div>
+      </div>
+    </div>
+    <div class="visual-panel" style="margin-top:0.45em">
+      <div class="visual-label">The planning chain this platform supports: resource → constraints → suitability → investment</div>
+      <div style="display:flex;justify-content:space-around;align-items:center;color:var(--ocean);font-size:0.48em;font-weight:700"><span>RESOURCE</span><b>→</b><span>CONSTRAINTS</span><b>→</b><span>SUITABILITY</span><b>→</b><span>INVESTMENT</span></div>
+    </div>
+    <div class="stat-band">
+      <div class="stat"><strong>Shared evidence</strong><span>one open dataset for all actors</span></div>
+      <div class="stat"><strong>Fewer conflicts</strong><span>uses mapped before they collide</span></div>
+      <div class="stat"><strong>Auditable</strong><span>decisions traceable to data &amp; code</span></div>
+    </div>
+    <aside class="notes">
+      Introduce marine spatial planning: the formal framework that turns a resource assessment into a siting decision. Emphasise the benefit for ORE — de-risking, conflict resolution, faster licensing and co-existence — and note that this platform is built exactly to power that chain from resource to investment.
+    </aside>
+  </section>
+
+  <!-- ============ 9C. MSP TOOL ARCHITECTURE ============ -->
+  <section>
+    <h3>The tool behind the plan</h3>
+    <h2>Basic system architecture of the MSP tool</h2>
+    <div class="grid two-col">
+      <div>
+        <div class="card">
+          <h4>Client tier · the browser</h4>
+          <p><b>MapLibre GL JS</b> renders the interactive map with layered overlays; <b>Chart.js</b> draws the click-to-query tidal curves. No desktop licence, no special software.</p>
+        </div>
+        <div class="card">
+          <h4>API tier · Flask REST service</h4>
+          <p>A thin server exposes the evidence as endpoints: COG raster tiles, point queries, polygon area stats, filtered resource screening and turbine performance.</p>
+        </div>
+        <div class="card coral">
+          <h4>Data tier · open model outputs</h4>
+          <p>The screening model writes interoperable files the API reads directly: <span class="chip">tidal_power_density.tif</span> COG · <span class="chip">hotspots.geojson</span> · <span class="chip">results.nc</span>.</p>
+        </div>
+      </div>
+      <div class="visual-panel">
+        <svg viewBox="0 0 560 430" class="stack" role="img" aria-label="MSP tool layered architecture">
+          <defs>
+            <marker id="arrow-arch" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+              <path d="M0,0 L8,3 L0,6 z" fill="#7f9aa8"></path>
+            </marker>
+          </defs>
+          <rect x="20" y="20" width="520" height="92" class="box title"></rect>
+          <text x="40" y="60" class="t">Browser</text>
+          <rect x="180" y="40" width="160" height="44" class="box alg"></rect><text x="260" y="67" text-anchor="middle">MapLibre GL JS</text>
+          <rect x="360" y="40" width="150" height="44" class="box alg"></rect><text x="435" y="67" text-anchor="middle">Chart.js</text>
+          <path d="M 280 132 L 280 150" class="arrow"></path>
+          <rect x="20" y="150" width="520" height="92" class="box title"></rect>
+          <text x="40" y="190" class="t">Flask REST API</text>
+          <rect x="180" y="170" width="330" height="44" class="box alg"></rect><text x="345" y="197" text-anchor="middle">tiles · query · timeseries · area_stats</text>
+          <path d="M 280 262 L 280 280" class="arrow"></path>
+          <rect x="20" y="280" width="520" height="130" class="box title"></rect>
+          <text x="40" y="320" class="t">Open data layer</text>
+          <rect x="180" y="300" width="150" height="44" class="box out"></rect><text x="255" y="327" text-anchor="middle">COG GeoTIFF</text>
+          <rect x="345" y="300" width="150" height="44" class="box out"></rect><text x="420" y="327" text-anchor="middle">hotspots.geojson</text>
+          <rect x="180" y="352" width="150" height="44" class="box out"></rect><text x="255" y="379" text-anchor="middle">results.nc</text>
+          <rect x="345" y="352" width="150" height="44" class="box out"></rect><text x="420" y="379" text-anchor="middle">bathymetry</text>
+        </svg>
+        <div class="visual-label">Three tiers: a browser client, a Flask API, and open model outputs underneath.</div>
+      </div>
+    </div>
+    <div class="datapath" style="margin-top:0.45em">
+      <span class="chip amber">model outputs</span><b>→</b><span class="chip ocean">Flask API</span><b>→</b><span class="chip">MapLibre GL JS</span><b>→</b><span class="chip coral">decision</span>
+    </div>
+    <aside class="notes">
+      Walk the architecture in three tiers. The browser is the whole interface. The Flask API is deliberately thin — it serves tiles, queries, area statistics and turbine modelling straight from open files. The data tier is the model's interoperable outputs, so the tool is a view over the science, not a black box.
+    </aside>
+  </section>
+
   <!-- ============ 10. PHASE 3: visualization ============ -->
   <section>
     <h3>Phase 3</h3>
@@ -718,7 +854,7 @@
     <div class="stat-band" style="margin-top:0.55em">
       <div class="stat"><strong>Where?</strong><span>mapped resource and constraints</span></div>
       <div class="stat"><strong>Why there?</strong><span>explicit criteria and weights</span></div>
-      <div class="stat"><strong>How check?</strong><span>open data, code and tests</span></div>
+      <div class="stat"><strong>How to check?</strong><span>open data, code and tests</span></div>
     </div>
     <blockquote>
       "Open geospatial frameworks empower organizations of all sizes to contribute to a sustainable future without being tethered to restrictive software licensing."
