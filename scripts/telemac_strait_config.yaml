@@ -1,0 +1,115 @@
+# TELEMAC-2D refinement config for a STRAIT-ALIGNED region (Surigao Strait).
+#
+# Differs from telemac_demo_config.yaml in three ways that matter for physics:
+#   1. The refinement box is centred on a real, channelised strait (Surigao
+#      Strait, ~125.5°E, 9.85°N, between Leyte and Mindanao) rather than an open
+#      shelf.  The single hotspot seed is in scripts/surigao_hotspots.geojson.
+#   2. The liquid (open) boundaries are the edges where the box meets open water:
+#      the NORTH (top, Bohol Sea) and the WEST (left, Bohol Sea).  The EAST
+#      (right) is the Mindanao coast (solid) and the SOUTH (bottom) is the Surigao
+#      sill / land (solid).  Because the mesh now EXCLUDES land cells, the
+#      coastline is classified solid automatically and only the north + west edges
+#      are liquid, giving two phase-lagged open segments (through-flow rather than
+#      a single closed-end pocket).
+#   3. The imposed tide is made to *propagate* along the strait axis
+#      (propagation_axis: lat) so the run shows through-flow instead of a
+#      standing-wave node.  See docs/TELEMAC.md "Standing-wave caveat".
+#
+# Run with:
+#   PYTHONPATH=src .venv/bin/python -m model.telemac pipeline \
+#       -c scripts/telemac_strait_config.yaml --hotspots scripts/surigao_hotspots.geojson
+
+domain:
+  lon_min: 116.0
+  lon_max: 128.0
+  lat_min: 4.0
+  lat_max: 22.0
+  resolution_km: 2.0
+
+bathymetry:
+  source: gebco
+  path: data/GEBCO_27_Aug_2026_0805e9b79dd8/gebco_2026_n22.0_s4.0_w112.0_e128.0.nc
+  min_depth: 2.0
+  max_depth: 6000.0
+  land_shapefile: data/philippines_landmass.geojson
+
+simulation:
+  start_time: "2024-01-01T00:00:00"
+  duration_days: 15
+  dt: null
+  cfl_safety: 0.5
+  cd: 0.0025
+  ah: 0.0
+  advection: false
+  use_numba: null
+  rho: 1025.0
+
+tidal_forcing:
+  source: got
+  path: data/GOT4.10c/grids_oceantide_netcdf/
+  constituents: [M2, S2, K1, O1]
+
+output:
+  dir: output/
+  save_interval_hours: 1
+  results_nc: results.nc
+  final_geotiff: tidal_power_density.tif
+  max_speed_geotiff: max_current_speed.tif
+  bathymetry_geotiff: bathymetry.tif
+  distance_geotiff: distance_to_coast.tif
+  hotspots_geojson: hotspots.geojson
+  # Illustrative threshold for this synthetic 0.5 m-tide demo (max power density
+  # here is ~0.6 W/m^2).  Lower so the genuinely channelised strait shows as a
+  # spread of points; raise for real-survey-grade screening.
+  hotspot_threshold: 0.05
+
+logging:
+  level: INFO
+  progress_interval_hours: 1.0
+
+engine:
+  name: telemac2d
+
+telemac2d:
+  image: flussplan/telemac:v8-latest
+  docker: true
+  cases_dir: cases/
+  ncsize: 1
+  mesh:
+    source: generated
+    supplied_mesh: null
+    resolution_m: 200.0
+    boundary:
+      # Open (liquid) boundaries = the two ends where the box meets open water:
+      # the NORTH (top) and the WEST / Bohol Sea (left).  The EAST (right) is the
+      # Mindanao coast (solid) and the SOUTH (bottom) is the Surigao sill / land
+      # (solid).  Two liquid segments => a genuine phase difference => through-flow
+      # (not a single closed-end pocket).  The mesh still excludes land cells, so
+      # the coastline reads as a solid wall.
+      edge_types:
+        left: liquid
+        right: solid
+        top: liquid
+        bottom: solid
+      # Impose a propagating tide so the strait shows through-flow instead of a
+      # standing wave.  The lag across the ~24 km box is omega*L/phase_speed; at
+      # phase_speed_mps=2.0 that is ~96 deg, i.e. a progressive (not resonant)
+      # wave.  This is a modelling choice, not a measured value (see docs/TELEMAC.md).
+      phase_speed_mps: 2.0
+      propagation_axis: lat
+      cluster_radius_km: 15.0
+      margin_km: 12.0
+      max_regions: 1
+      liquid_nodes_file: null
+  steering:
+    template: null
+    time_step: 30.0
+    duration_days: 2
+    variables: ['ELEVATION Z', 'VELOCITY U', 'VELOCITY V']
+    friction_law: 2
+    friction_coefficient: 40.0
+    linear_friction_coefficient: null
+    advection: false
+  postprocess:
+    output_grid_resolution_km: 0.5
+    write_to_output_root: false

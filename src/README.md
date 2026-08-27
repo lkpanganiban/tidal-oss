@@ -190,6 +190,50 @@ python -m pytest src/model/tests/
 
 ---
 
+## Step 1b — TELEMAC-2D refinement (alternative engine)
+
+TELEMAC-2D is an *alternative* hydrodynamic engine for refining screening
+hotspots at higher resolution on an unstructured mesh. It runs only inside a
+public Docker image (default `flussplan/telemac:v8-latest`, pinned in
+`src/model/config.yaml`). The screening model must already have produced
+`output/hotspots.geojson` (run Step 1 first, or the pipeline runs it for you).
+
+Set the engine:
+
+```yaml
+engine:
+  name: telemac2d
+```
+
+Then run the full Docker-driven pipeline (screen → cluster → TELEMAC →
+post-process):
+
+```bash
+scripts/telemac_pipeline.sh
+```
+
+Or step by step with Compose:
+
+```bash
+docker compose up --abort-on-container-exit tidal-screening   # 1. screening
+docker compose run --rm tidal-prepare                          # 2. cluster -> cases/
+docker compose run --rm -e CASE_DIR=/cases/region-001 tidal-telemac   # 3. run
+docker compose run --rm tidal-postprocess                      # 4. canonical outputs
+```
+
+Or with the Python CLI (no Compose):
+
+```bash
+python -m model.telemac prepare --cases-dir cases
+python -m model.telemac run --case cases/region-001            # via Docker
+python -m model.telemac postprocess --case-dir cases/region-001 \
+    --output-dir output/telemac/region-001
+```
+
+Refinement outputs land in `output/telemac/<region>/` and are served by the web
+app exactly like the screening outputs. See `docs/TELEMAC.md` and the linked
+pages for mesh, boundary, and post-processing details.
+
 ## Step 2 — Run the web service
 
 The web service requires `output/tidal_power_density.tif` to exist.

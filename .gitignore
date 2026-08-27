@@ -6,6 +6,10 @@ data/*
 output/*
 !output/.gitkeep
 
+# --- TELEMAC refinement cases (generated at runtime) ---
+cases/*
+cases_strait/
+
 # --- Python ---
 __pycache__/
 *.pyc

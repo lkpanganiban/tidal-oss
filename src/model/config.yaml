@@ -3,17 +3,17 @@
 
 domain:
   lon_min: 116.0
-  lon_max: 130.0
+  lon_max: 128.0
   lat_min: 4.0
   lat_max: 22.0
   resolution_km: 2.0           # target cell size
 
 bathymetry:
   source: gebco                 # gebco | file
-  path: data/gebco_bathymetry/gebco_2026_n19.03_s14.0_w118.0_e124.0.nc
+  path: data/GEBCO_27_Aug_2026_0805e9b79dd8/gebco_2026_n22.0_s4.0_w112.0_e128.0.nc
   min_depth: 2.0                # enforce minimum depth [m]
   max_depth: 6000.0             # clip unrealistic depths
-  land_shapefile: data/gadm41_PHL_shp/gadm41_PHL_0.shp
+  land_shapefile: data/philippines_landmass.geojson
 
 simulation:
   start_time: "2024-01-01T00:00:00"
@@ -45,3 +45,46 @@ output:
 logging:
   level: INFO
   progress_interval_hours: 1.0
+
+# ---------------------------------------------------------------------------
+# Engine selection
+# ---------------------------------------------------------------------------
+# The Python screening solver is the default.  Set name: telemac2d to refine
+# the screening hotspots with the finite-element TELEMAC-2D solver running in
+# a public Docker image (see docs/TELEMAC.md).  TELEMAC is an *alternative*
+# engine — the screening model must produce hotspots first (it runs
+# automatically if they are missing).
+engine:
+  name: python                  # python | telemac2d
+
+telemac2d:
+  image: flussplan/telemac:v8-latest   # public TELEMAC image (PIN this for reproducibility)
+  docker: true                          # set false to use a native telemac2d.py install
+  cases_dir: cases/                     # prepared case directories (gitignored)
+  ncsize: 1                            # Open MPI partitions for parallel runs
+  mesh:
+    source: generated                   # generated (from screening) | supplied (.slf)
+    supplied_mesh: null                 # path/bbox/projection when source=supplied
+    resolution_m: 200.0                 # target spacing for generated meshes
+    boundary:
+      edge_types:                       # which subdomain edges carry tidal forcing
+        left: liquid
+        right: liquid
+        top: solid
+        bottom: solid
+      cluster_radius_km: 15.0          # hotspot clustering radius
+      margin_km: 10.0                  # buffer added around each cluster
+      max_regions: 3                    # top-N clusters to refine
+      liquid_nodes_file: null          # optional explicit 1-based liquid point list
+  steering:
+    template: null                     # optional .cas template ({{...}} placeholders)
+    time_step: 30.0                    # TELEMAC time step [s]
+    duration_days: 15                  # one spring-neap cycle
+    variables: ['ELEVATION Z', 'VELOCITY U', 'VELOCITY V']
+    friction_law: 2
+    friction_coefficient: 40.0
+    linear_friction_coefficient: null
+    advection: false
+  postprocess:
+    output_grid_resolution_km: 0.5      # raster resolution for canonical outputs
+    write_to_output_root: false        # if true, top region overwrites screening outputs

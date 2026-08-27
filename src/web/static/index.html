@@ -1172,7 +1172,7 @@ function renderAreaResults(d, eff) {
 
 async function loadHotspots() {
   try {
-    const r = await fetch(API + '/hotspots?limit=200');
+    const r = await fetch(API + '/hotspots');
     if (!r.ok) { $('hotspot-list').innerHTML = '<div class="hs-empty">Run the model to generate hotspots.</div>'; return; }
     const fc = await r.json();
     state.hotspots = fc.features;
@@ -1193,11 +1193,16 @@ function renderHotspots() {
     return;
   }
   map.addSource('hot-src', { type: 'geojson', data: { type: 'FeatureCollection', features: state.hotspots } });
+  // Data-driven radius/colour stops so both low-power demos (W/m² ~ 0.1) and
+  // production-scale screenings (100s–1000s W/m²) render with visible variation.
+  const pw = state.hotspots.map(f => f.properties.power_density_Wm2 || 0);
+  const vmax = pw.length ? Math.max(...pw) : 2000;
+  const lo = vmax / 3, hi = (2 * vmax) / 3;
   map.addLayer({
     id: 'hot-pts', type: 'circle', source: 'hot-src',
     paint: {
-      'circle-radius': ['interpolate', ['linear'], ['get', 'power_density_Wm2'], 200, 4, 1000, 9, 2000, 14],
-      'circle-color': ['interpolate', ['linear'], ['get', 'power_density_Wm2'], 200, '#22d3ee', 600, '#fbbf24', 1200, '#f87171'],
+      'circle-radius': 3,
+      'circle-color': ['interpolate', ['linear'], ['get', 'power_density_Wm2'], 0, '#22d3ee', lo, '#22d3ee', hi, '#fbbf24', vmax, '#f87171'],
       'circle-opacity': 0.85, 'circle-stroke-color': '#0b0e14', 'circle-stroke-width': 1,
     },
   });

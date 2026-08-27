@@ -1,0 +1,98 @@
+# Demo configuration for the TELEMAC-2D refinement workflow.
+#
+# Uses the SAME real input data as src/model/config.yaml (GEBCO bathymetry,
+# GOT4.10c tidal harmonics, land mask) so the pipeline is faithful, but
+# shortens the TELEMAC steering so the public Docker image finishes in a
+# demo-friendly time.  Set engine.name to telemac2d to run the full chain via
+# `python -m model.run`, or drive each stage explicitly with
+# `python -m model.telemac {prepare,run,postprocess}`.
+
+domain:
+  lon_min: 116.0
+  lon_max: 128.0
+  lat_min: 4.0
+  lat_max: 22.0
+  resolution_km: 2.0
+
+bathymetry:
+  source: gebco
+  path: data/GEBCO_27_Aug_2026_0805e9b79dd8/gebco_2026_n22.0_s4.0_w112.0_e128.0.nc
+  min_depth: 2.0
+  max_depth: 6000.0
+  land_shapefile: data/philippines_landmass.geojson
+
+simulation:
+  start_time: "2024-01-01T00:00:00"
+  duration_days: 15
+  dt: null
+  cfl_safety: 0.5
+  cd: 0.0025
+  ah: 0.0
+  advection: false
+  use_numba: null
+  rho: 1025.0
+
+tidal_forcing:
+  source: got
+  path: data/GOT4.10c/grids_oceantide_netcdf/
+  constituents: [M2, S2, K1, O1]
+
+output:
+  dir: output/
+  save_interval_hours: 1
+  results_nc: results.nc
+  final_geotiff: tidal_power_density.tif
+  max_speed_geotiff: max_current_speed.tif
+  bathymetry_geotiff: bathymetry.tif
+  distance_geotiff: distance_to_coast.tif
+  hotspots_geojson: hotspots.geojson
+  hotspot_threshold: 2.0
+
+logging:
+  level: INFO
+  progress_interval_hours: 1.0
+
+engine:
+  name: telemac2d
+
+telemac2d:
+  image: flussplan/telemac:v8-latest
+  docker: true
+  cases_dir: cases/
+  ncsize: 1
+  mesh:
+    source: generated
+    supplied_mesh: null
+    resolution_m: 200.0
+    boundary:
+      edge_types:
+        left: liquid
+        right: liquid
+        top: solid
+        bottom: solid
+      # Retard the tide along +lon so it *propagates* across the sub-domain
+      # instead of forming a standing wave.  A sub-domain far shorter than the
+      # M2 wavelength (~1000 km) that is forced (nearly) in phase on its liquid
+      # boundaries only sustains a standing wave — current antinodes at the two
+      # open edges and a node in the middle, which drains power out of the
+      # interior.  Deliberately imposing a linear phase lag (phase_speed_mps)
+      # makes the box hold roughly a half wavelength so the tide visibly
+      # travels through the domain (see docs/TELEMAC.md "Standing-wave caveat").
+      phase_speed_mps: 2.0
+      propagation_axis: lon
+      cluster_radius_km: 15.0
+      margin_km: 10.0
+      max_regions: 1
+      liquid_nodes_file: null
+  steering:
+    template: null
+    time_step: 30.0
+    duration_days: 2
+    variables: ['ELEVATION Z', 'VELOCITY U', 'VELOCITY V']
+    friction_law: 2
+    friction_coefficient: 40.0
+    linear_friction_coefficient: null
+    advection: false
+  postprocess:
+    output_grid_resolution_km: 0.5
+    write_to_output_root: false

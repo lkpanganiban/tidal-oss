@@ -1,3 +1,15 @@
+# Tidal hydrodynamic model + TELEMAC-2D refinement + web visualisation.
+#
+# Services are grouped by Compose profile so you only start what you need:
+#   docker compose up web          # Flask + MapLibre map (default)
+#   docker compose up screening    # run the Python screening model
+#   docker compose run --rm tidal-prepare     # cluster hotspots -> TELEMAC cases
+#   docker compose run --rm -e CASE_DIR=/cases/region-001 tidal-telemac   # run one case
+#   docker compose run --rm tidal-postprocess  # .slf -> canonical outputs
+#
+# The TELEMAC image is a *public* third-party image; pin the tag/digest in
+# src/model/config.yaml (telemac2d.image) for reproducibility. See docs/TELEMAC.md.
+
 services:
   tidal-web:
     build:
@@ -13,3 +25,67 @@ services:
       - OUTPUT_DIR=/output
       - GEOTIFF_PATH=/output/tidal_power_density.tif
     restart: unless-stopped
+    profiles: ["web"]
+
+  tidal-screening:
+    build:
+      context: .
+      dockerfile: src/Dockerfile
+    image: tidal-model:latest
+    working_dir: /app/src
+    command: ["python", "-m", "model.run", "--output-dir", "/output"]
+    volumes:
+      - ./data:/app/data
+      - ./output:/output
+    environment:
+      - OUTPUT_DIR=/output
+    profiles: ["screening"]
+
+  tidal-prepare:
+    build:
+      context: .
+      dockerfile: src/Dockerfile
+    image: tidal-model:latest
+    working_dir: /app/src
+    command: ["python", "-m", "model.telemac", "prepare", "--cases-dir", "/cases"]
+    volumes:
+      - ./data:/app/data
+      - ./output:/output
+      - ./cases:/cases
+    environment:
+      - OUTPUT_DIR=/output
+    profiles: ["screening"]
+
+  tidal-telemac:
+    image: flussplan/telemac:v8-latest
+    working_dir: /cases
+    entrypoint: ["/bin/bash", "/scripts/telemac_entrypoint.sh"]
+    volumes:
+      - ./cases:/cases
+      - ./scripts:/scripts
+    environment:
+      - CASE_DIR=/cases/region-001
+      - NCSIZE=1
+    profiles: ["telemac"]
+
+  tidal-postprocess:
+    build:
+      context: .
+      dockerfile: src/Dockerfile
+    image: tidal-model:latest
+    working_dir: /app/src
+    command:
+      - "python"
+      - "-m"
+      - "model.telemac"
+      - "postprocess"
+      - "--case-dir"
+      - "/cases/region-001"
+      - "--output-dir"
+      - "/output/telemac/region-001"
+    volumes:
+      - ./cases:/cases
+      - ./output:/output
+    environment:
+      - OUTPUT_DIR=/output
+    profiles: ["telemac"]

@@ -129,6 +129,25 @@ density $P = \frac12 \rho |U|^3$ in W/m².
     └── hotspots.geojson
 ```
 
+### 3b. TELEMAC-2D refinement backend (`src/model/telemac/`)
+
+An *alternative* engine. The Python solver stays the default (`engine.name:
+python` in `src/model/config.yaml`); set `telemac2d` to refine screening
+hotspots on an unstructured mesh. Key modules:
+
+- `selafin.py` — pure-Python Selafin (SERAFIN) mesh/result read+write.
+- `mesh.py` — generated (clip screening grid + triangulate) or supplied `.slf` meshes; lon/lat ↔ local-metre projection.
+- `boundaries.py` — `.cli` / `.liq` generation from the same harmonics as the screening model.
+- `steering.py` — `.cas` generation (template or defaults).
+- `case.py` — assembles a self-contained case directory + manifest.
+- `runner.py` — invokes `telemac2d.py` inside the **public** Docker image (`telemac2d.image`, never compiled in-repo).
+- `postprocess.py` — converts `r2d.slf` into the canonical `results.nc` / GeoTIFF / GeoJSON outputs.
+- `cli.py` — `python -m model.telemac {prepare,run,postprocess,pipeline}`.
+
+TELEMAC runs only via Docker; pin the image tag/digest. Docs: `docs/TELEMAC.md`,
+`docs/WORKFLOW.md`, `docs/CASE_AUTHORING.md`, `docs/POSTPROCESSING.md`,
+`docs/TROUBLESHOOTING.md`.
+
 ## 4. How to run the code
 
 ### 4.1 Quick test (no data needed)

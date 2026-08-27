@@ -30,11 +30,11 @@ from urllib.request import urlretrieve
 
 DATASETS: dict[str, dict] = {
     "gebco": {
-        "name": "GEBCO 2024 bathymetry",
+        "name": "GEBCO 2026 bathymetry",
         "required": False,
-        "size_hint": "~2.7 GB (global NetCDF)",
+        "size_hint": "~3.5 GB (global NetCDF)",
         "urls": [],
-        "dest": "GEBCO_2024.nc",
+        "dest": "GEBCO_2026.nc",
         "post_process": None,
         "manual_url": "https://www.gebco.net/data_and_products/gridded_bathymetry_data/gebco_2024/",
         "manual_note": (

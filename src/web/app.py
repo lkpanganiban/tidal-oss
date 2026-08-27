@@ -204,20 +204,36 @@ def _render_tile(src, z: int, x: int, y: int, layer: str) -> io.BytesIO | None:
         logger.error("Pillow not installed")
         return None
 
-    from rasterio.warp import transform_bounds
+    from rasterio.enums import Resampling
+    from rasterio.transform import from_bounds
+    from rasterio.warp import reproject, transform_bounds
 
     west = x / (1 << z) * 360.0 - 180.0
     east = (x + 1) / (1 << z) * 360.0 - 180.0
     north = _mercator_to_lat(np.pi * (1.0 - 2.0 * y / (1 << z)))
     south = _mercator_to_lat(np.pi * (1.0 - 2.0 * (y + 1) / (1 << z)))
 
-    bbox_src_crs = transform_bounds("EPSG:4326", src.crs, west, south, east, north)
-    window = src.window(*bbox_src_crs)
-
-    if window.width < 1 or window.height < 1:
-        return None
-
-    data = src.read(1, window=window, out_shape=(TILE_SIZE, TILE_SIZE))
+    # Reproject into the complete Web-Mercator tile. Reading only the source
+    # intersection and resizing it to 256x256 stretches small rasters across
+    # the whole tile, misaligning them with GeoJSON overlays.
+    west_m, south_m, east_m, north_m = transform_bounds(
+        "EPSG:4326", "EPSG:3857", west, south, east, north
+    )
+    dst_transform = from_bounds(
+        west_m, south_m, east_m, north_m, TILE_SIZE, TILE_SIZE
+    )
+    data = np.full((TILE_SIZE, TILE_SIZE), np.nan, dtype=np.float32)
+    reproject(
+        source=src.read(1),
+        destination=data,
+        src_transform=src.transform,
+        src_crs=src.crs,
+        src_nodata=src.nodata if src.nodata is not None else np.nan,
+        dst_transform=dst_transform,
+        dst_crs="EPSG:3857",
+        dst_nodata=np.nan,
+        resampling=Resampling.bilinear,
+    )
     data = np.ma.masked_invalid(data)
 
     if data.mask.all():

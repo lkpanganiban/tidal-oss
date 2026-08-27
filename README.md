@@ -95,6 +95,39 @@ curl http://localhost:5000/api/metadata | jq
 curl "http://localhost:5000/api/query?lat=12.5&lon=122.5"
 ```
 
+## TELEMAC-2D refinement (alternative engine)
+
+The Python screening model is the default. To assess a hotspot at higher
+resolution you can switch to **TELEMAC-2D**, a finite-element solver, as an
+*alternative* engine. TELEMAC runs entirely inside a public Docker image; the
+repository never compiles it. The refinement reuses the screening hotspots,
+generates a mesh, runs TELEMAC, and writes the **same** `results.nc` / GeoTIFF /
+GeoJSON outputs so the web app is unchanged.
+
+```bash
+# 1. Screening (writes output/hotspots.geojson) — or reuse an existing run
+docker compose up --abort-on-container-exit tidal-screening
+
+# 2-4. Cluster, run TELEMAC (Docker), and post-process every region
+scripts/telemac_pipeline.sh
+
+# 5. Visualise one refinement (point the web service at its folder)
+OUTPUT_DIR=output/telemac/region-001 docker compose up -d
+```
+
+Engine selection (defaults to `python`):
+
+```yaml
+engine:
+  name: telemac2d          # python | telemac2d
+telemac2d:
+  image: flussplan/telemac:v8-latest   # PIN this (tag or digest)
+```
+
+Full reference: [docs/TELEMAC.md](docs/TELEMAC.md) · [workflow](docs/WORKFLOW.md) ·
+[case authoring](docs/CASE_AUTHORING.md) · [post-processing](docs/POSTPROCESSING.md) ·
+[troubleshooting](docs/TROUBLESHOOTING.md).
+
 ## Project Structure
 
 ```
@@ -296,7 +329,6 @@ mypy src/model src/web
 
 ## Future Extensions
 
-- TELEMAC-2D refinement of screening hotspots (unstructured mesh, higher resolution)
 - TELEMAC-3D for vertical velocity profiling
 - Wave-current coupling with TOMAWAC
 - Real-time tidal forecasting via live boundary-condition feeds

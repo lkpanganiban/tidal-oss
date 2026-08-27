@@ -91,16 +91,18 @@ def test_layers_endpoint_missing(tmp_path):
 
 def test_tile_valid_png(client):
     for layer in ("power", "speed", "depth", "distance"):
-        resp = client.get(f"/api/tiles/{layer}/5/10/15.png")
+        # z5/x26/y14 covers the Philippines fixture (x10/y15 is over the
+        # Atlantic and should correctly return an empty tile).
+        resp = client.get(f"/api/tiles/{layer}/5/26/14.png")
         assert resp.status_code == 200, f"{layer} tile failed"
         assert resp.mimetype == "image/png"
         assert resp.data[:8] == b"\x89PNG\r\n\x1a\n"
         assert "max-age" in resp.headers.get("Cache-Control", "")
     # Legacy alias without layer name
-    resp = client.get("/api/tiles/5/10/15.png")
+    resp = client.get("/api/tiles/5/26/14.png")
     assert resp.status_code == 200
     # Repeated request hits the cache
-    resp2 = client.get("/api/tiles/5/10/15.png")
+    resp2 = client.get("/api/tiles/5/26/14.png")
     assert resp2.data == resp.data
 
 
