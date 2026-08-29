@@ -138,19 +138,61 @@ LAYERS: dict[str, dict] = {
 }
 
 
-def _layer_path(layer: str) -> str:
-    """Absolute path of a layer's GeoTIFF (siblings of the power file)."""
-    if layer == "power":
-        return GEOTIFF_PATH
-    return os.path.join(os.path.dirname(GEOTIFF_PATH), LAYERS[layer]["file"])
+# Allow per-layer value-range overrides via environment variables
+# (e.g. TIDAL_POWER_VMAX=1.0) so low-amplitude refinement outputs stay
+# legible.  Defaults are unchanged when the variables are unset.
+for _name in LAYERS:
+    _env_vmax = os.environ.get(f"TIDAL_{_name.upper()}_VMAX")
+    if _env_vmax:
+        try:
+            LAYERS[_name]["vmax"] = float(_env_vmax)
+        except ValueError:
+            logger.warning("Ignoring invalid TIDAL_%s_VMAX=%s", _name.upper(), _env_vmax)
 
 
-def _results_nc_path() -> str:
-    return os.path.join(os.path.dirname(GEOTIFF_PATH), "results.nc")
+def _resolve_root(region: str | None) -> str:
+    """Directory holding a dataset's outputs.
+
+    With no region the Python screening outputs in ``OUTPUT_DIR`` are used;
+    otherwise the per-region TELEMAC-2D refinement under
+    ``OUTPUT_DIR/telemac/<region>/`` is used (when it exists).
+    """
+    if region:
+        cand = os.path.join(OUTPUT_DIR, "telemac", region)
+        if os.path.isdir(cand):
+            return cand
+    return os.path.dirname(GEOTIFF_PATH)
 
 
-def _hotspots_path() -> str:
-    return os.path.join(os.path.dirname(GEOTIFF_PATH), "hotspots.geojson")
+def _layer_path(layer: str, region: str | None = None) -> str:
+    """Absolute path of a layer's GeoTIFF within the selected dataset."""
+    return os.path.join(_resolve_root(region), LAYERS[layer]["file"])
+
+
+def _results_nc_path(region: str | None = None) -> str:
+    return os.path.join(_resolve_root(region), "results.nc")
+
+
+def _hotspots_path(region: str | None = None) -> str:
+    return os.path.join(_resolve_root(region), "hotspots.geojson")
+
+
+def _root_bounds(root: str) -> dict | None:
+    """Bounding box (EPSG:4326) of a dataset's power raster, or None."""
+    src = _open_raster(os.path.join(root, LAYERS["power"]["file"]))
+    if src is None:
+        return None
+    try:
+        from rasterio.warp import transform_bounds
+
+        b = src.bounds
+        if src.crs is not None and src.crs.to_epsg() != 4326:
+            bb = transform_bounds(src.crs, "EPSG:4326", b.left, b.bottom, b.right, b.top)
+        else:
+            bb = (b.left, b.bottom, b.right, b.top)
+        return {"west": bb[0], "south": bb[1], "east": bb[2], "north": bb[3]}
+    finally:
+        src.close()
 
 
 # ---------------------------------------------------------------------------
@@ -180,10 +222,10 @@ def _file_mtime(path: str) -> float:
 
 @lru_cache(maxsize=1024)
 def _render_tile_cached(
-    layer: str, z: int, x: int, y: int, mtime: float
+    layer: str, z: int, x: int, y: int, mtime: float, region: str | None = None
 ) -> bytes | None:
     """Render a tile to PNG bytes, cached keyed on (layer, z, x, y, mtime)."""
-    path = _layer_path(layer)
+    path = _layer_path(layer, region)
     src = _open_raster(path)
     if src is None:
         return None
@@ -288,10 +330,10 @@ def _mercator_to_lat(y: float) -> float:
     return np.rad2deg(2.0 * np.arctan(np.exp(y)) - np.pi / 2.0)
 
 
-def _layer_metadata(layer: str) -> dict | None:
+def _layer_metadata(layer: str, region: str | None = None) -> dict | None:
     """Per-layer metadata dict, or None when the file is unavailable."""
     meta = LAYERS[layer]
-    path = _layer_path(layer)
+    path = _layer_path(layer, region)
     src = _open_raster(path)
     if src is None:
         return None
@@ -348,9 +390,11 @@ def _raster_stats(src) -> dict:
     }
 
 
-def _point_query(lat: float, lon: float, layer: str = "power") -> dict | None:
+def _point_query(
+    lat: float, lon: float, layer: str = "power", region: str | None = None
+) -> dict | None:
     """Query a raster layer at a geographic point."""
-    path = _layer_path(layer)
+    path = _layer_path(layer, region)
     src = _open_raster(path)
     if src is None:
         return None
@@ -395,10 +439,10 @@ def _cell_area_m2(lat_deg: float, res_deg_x: float, res_deg_y: float) -> float:
 
 
 def _read_layer_array(
-    layer: str,
+    layer: str, region: str | None = None
 ) -> tuple[np.ndarray | None, Any, int, int]:
     """Read a layer as (array, transform, width, height) or (None, ...) if missing."""
-    path = _layer_path(layer)
+    path = _layer_path(layer, region)
     src = _open_raster(path)
     if src is None:
         return None, 0.0, 0, 0
@@ -418,9 +462,10 @@ def _resource_totals(
     depth_min: float | None,
     depth_max: float | None,
     efficiency: float,
+    region: str | None = None,
 ) -> dict | None:
     """Aggregate resource statistics over the filtered domain."""
-    power, transform, w, h = _read_layer_array("power")
+    power, transform, w, h = _read_layer_array("power", region)
     if power is None:
         return None
 
@@ -429,7 +474,7 @@ def _resource_totals(
 
     depth = None
     if depth_min is not None or depth_max is not None:
-        depth, _, _, _ = _read_layer_array("depth")
+        depth, _, _, _ = _read_layer_array("depth", region)
         if depth is not None:
             if depth_min is not None:
                 mask &= depth >= depth_min
@@ -479,20 +524,25 @@ def _resource_cached(
     depth_max: float,
     efficiency: float,
     mtime: float,
+    region: str | None = None,
 ) -> dict | None:
-    return _resource_totals(min_power, depth_min or None, depth_max or None, efficiency)
+    return _resource_totals(
+        min_power, depth_min or None, depth_max or None, efficiency, region
+    )
 
 
-def _area_stats(polygon: list[list[float]], efficiency: float) -> dict | None:
+def _area_stats(
+    polygon: list[list[float]], efficiency: float, region: str | None = None
+) -> dict | None:
     """Statistics for cells inside a polygon (GeoJSON ring of [lon, lat])."""
-    power, transform, w, h = _read_layer_array("power")
+    power, transform, w, h = _read_layer_array("power", region)
     if power is None:
         return None
 
     from rasterio.features import geometry_mask
     from rasterio.warp import transform_geom
 
-    src = _open_raster(_layer_path("power"))
+    src = _open_raster(_layer_path("power", region))
     if src is None:
         return None
     try:
@@ -531,7 +581,7 @@ def _area_stats(polygon: list[list[float]], efficiency: float) -> dict | None:
 
     # Depth range inside the polygon (when available)
     depth_range = None
-    depth, _, _, _ = _read_layer_array("depth")
+    depth, _, _, _ = _read_layer_array("depth", region)
     if depth is not None and np.any(inside & ~np.isnan(depth)):
         dv = depth[inside & ~np.isnan(depth)]
         depth_range = [round(float(dv.min()), 1), round(float(dv.max()), 1)]
@@ -549,18 +599,20 @@ def _area_stats(polygon: list[list[float]], efficiency: float) -> dict | None:
 
 
 @lru_cache(maxsize=32)
-def _area_stats_cached(ring_json: str, efficiency: float, mtime: float) -> dict | None:
-    return _area_stats(json.loads(ring_json), efficiency)
+def _area_stats_cached(
+    ring_json: str, efficiency: float, mtime: float, region: str | None = None
+) -> dict | None:
+    return _area_stats(json.loads(ring_json), efficiency, region)
 
 
-def _timeseries(lat: float, lon: float) -> dict | None:
+def _timeseries(lat: float, lon: float, region: str | None = None) -> dict | None:
     """Nearest-cell time series from results.nc."""
     try:
         from netCDF4 import Dataset
     except ImportError:
         return None
 
-    path = _results_nc_path()
+    path = _results_nc_path(region)
     if not os.path.isfile(path):
         return None
 
@@ -599,8 +651,10 @@ def _timeseries(lat: float, lon: float) -> dict | None:
 
 
 @lru_cache(maxsize=256)
-def _timeseries_cached(lat: float, lon: float, mtime: float) -> dict | None:
-    return _timeseries(lat, lon)
+def _timeseries_cached(
+    lat: float, lon: float, mtime: float, region: str | None = None
+) -> dict | None:
+    return _timeseries(lat, lon, region)
 
 
 # ---------------------------------------------------------------------------
@@ -616,9 +670,10 @@ def index():
 @app.route("/api/layers")
 def layers():
     """Metadata for every configured layer (available or not)."""
+    region = request.args.get("region")
     out = {}
     for name in LAYERS:
-        meta = _layer_metadata(name)
+        meta = _layer_metadata(name, region)
         if meta is not None:
             meta["available"] = True
         else:
@@ -628,7 +683,13 @@ def layers():
                 "available": False,
             }
         out[name] = meta
-    resp = jsonify({"layers": out, "results_nc": os.path.isfile(_results_nc_path())})
+    resp = jsonify(
+        {
+            "layers": out,
+            "results_nc": os.path.isfile(_results_nc_path(region)),
+            "region": region or "",
+        }
+    )
     resp.headers["Cache-Control"] = "public, max-age=300"
     return resp
 
@@ -636,12 +697,45 @@ def layers():
 @app.route("/api/metadata")
 def metadata():
     """Backwards-compatible metadata alias for the power layer."""
-    meta = _layer_metadata("power")
+    meta = _layer_metadata("power", request.args.get("region"))
     if meta is not None:
         meta["available"] = True
     else:
         meta = {"available": False}
     resp = jsonify(meta)
+    resp.headers["Cache-Control"] = "public, max-age=300"
+    return resp
+
+
+@app.route("/api/datasets")
+def datasets():
+    """List every servable dataset: the Python screening + TELEMAC-2D regions."""
+    items = []
+    root_bounds = _root_bounds(os.path.dirname(GEOTIFF_PATH))
+    items.append(
+        {
+            "id": "",
+            "label": "Python screening (archipelago)",
+            "engine": "python",
+            "bounds": root_bounds,
+        }
+    )
+    telemac_dir = os.path.join(OUTPUT_DIR, "telemac")
+    if os.path.isdir(telemac_dir):
+        for name in sorted(os.listdir(telemac_dir)):
+            d = os.path.join(telemac_dir, name)
+            if os.path.isdir(d) and os.path.isfile(
+                os.path.join(d, LAYERS["power"]["file"])
+            ):
+                items.append(
+                    {
+                        "id": name,
+                        "label": f"TELEMAC-2D · {name}",
+                        "engine": "telemac2d",
+                        "bounds": _root_bounds(d),
+                    }
+                )
+    resp = jsonify({"datasets": items})
     resp.headers["Cache-Control"] = "public, max-age=300"
     return resp
 
@@ -661,7 +755,7 @@ def query():
     except ValueError:
         return jsonify({"error": "invalid lat/lon"}), 400
 
-    result = _point_query(lat, lon, layer)
+    result = _point_query(lat, lon, layer, request.args.get("region"))
     if result is None:
         return jsonify({"error": "no data at this location"}), 404
     return jsonify(result)
@@ -677,12 +771,13 @@ def tile(layer: str = "power", z: int = 0, x: int = 0, y: int = 0):
         return jsonify({"error": "tile out of range"}), 404
     if layer not in LAYERS:
         return jsonify({"error": f"unknown layer: {layer}"}), 404
-    if not os.path.isfile(_layer_path(layer)):
+    region = request.args.get("region")
+    if not os.path.isfile(_layer_path(layer, region)):
         return jsonify({"error": f"layer '{layer}' not generated"}), 404
 
     try:
         tile_bytes = _render_tile_cached(
-            layer, z, x, y, _file_mtime(_layer_path(layer))
+            layer, z, x, y, _file_mtime(_layer_path(layer, region)), region
         )
     except Exception as exc:
         logger.exception(
@@ -710,7 +805,8 @@ def timeseries():
     except ValueError:
         return jsonify({"error": "invalid lat/lon"}), 400
 
-    result = _timeseries_cached(lat, lon, _file_mtime(_results_nc_path()))
+    region = request.args.get("region")
+    result = _timeseries_cached(lat, lon, _file_mtime(_results_nc_path(region)), region)
     if result is None:
         return jsonify({"error": "no time series available (run the model first)"}), 404
     return jsonify(result)
@@ -739,7 +835,8 @@ def turbine_performance():
     except ValueError:
         return jsonify({"error": "invalid lat/lon"}), 400
 
-    ts = _timeseries_cached(lat, lon, _file_mtime(_results_nc_path()))
+    region = request.args.get("region")
+    ts = _timeseries_cached(lat, lon, _file_mtime(_results_nc_path(region)), region)
     if ts is None:
         return jsonify({"error": "no time series available (run the model first)"}), 404
 
@@ -759,7 +856,7 @@ def turbine_performance():
 
 @app.route("/api/hotspots")
 def hotspots():
-    path = _hotspots_path()
+    path = _hotspots_path(request.args.get("region"))
     if not os.path.isfile(path):
         return jsonify(
             {"error": "hotspots.geojson not found (run the model first)"}
@@ -805,10 +902,12 @@ def area_stats():
     if not (0 < efficiency <= 1):
         return jsonify({"error": "efficiency must be in (0, 1]"}), 400
 
+    region = request.args.get("region")
     result = _area_stats_cached(
         json.dumps([[float(a), float(b)] for a, b in polygon]),
         efficiency,
-        _file_mtime(_layer_path("power")),
+        _file_mtime(_layer_path("power", region)),
+        region,
     )
     if result is None:
         return jsonify({"error": "power layer not available"}), 404
@@ -830,12 +929,14 @@ def resource():
     if not (0 < efficiency <= 1):
         return jsonify({"error": "efficiency must be in (0, 1]"}), 400
 
+    region = request.args.get("region")
     result = _resource_cached(
         min_power,
         depth_min or 0.0,
         depth_max or 0.0,
         efficiency,
-        _file_mtime(_layer_path("power")),
+        _file_mtime(_layer_path("power", region)),
+        region,
     )
     if result is None:
         return jsonify({"error": "power layer not available"}), 404
@@ -852,7 +953,7 @@ def download(filename: str):
     if filename not in safe_names:
         return jsonify({"error": "file not available for download"}), 404
 
-    path = os.path.join(os.path.dirname(GEOTIFF_PATH), filename)
+    path = os.path.join(_resolve_root(request.args.get("region")), filename)
     if not os.path.isfile(path):
         return jsonify({"error": f"{filename} not yet generated"}), 404
 

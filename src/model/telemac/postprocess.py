@@ -112,6 +112,16 @@ def postprocess_case(
     power_mean = np.zeros((ny, nx), dtype=np.float64)
     speed_max = np.zeros((ny, nx), dtype=np.float64)
 
+    # The Python screening aggregates over its ~hourly snapshots rather than
+    # every solver step, so we do the same here: keep ~360 evenly spaced frames
+    # for both the persisted NetCDF time series AND the mean/max rasters.  This
+    # keeps the TELEMAC output comparable to the Python one and avoids
+    # rasterising tens of thousands of frames.
+    _target_snapshots = 360
+    _stride = max(1, nt // _target_snapshots)
+    _frames = list(range(0, nt, _stride))
+    _nframes = len(_frames)
+
     os.makedirs(out_dir, exist_ok=True)
     nc_path = os.path.join(out_dir, manifest.get("results_nc", "results.nc"))
     extra_attrs = {
@@ -127,7 +137,7 @@ def postprocess_case(
     with NetCDFStreamWriter(
         nc_path, grid, rho=rho, cd=cd, extra_attrs=extra_attrs, mode="w"
     ) as writer:
-        for t_idx in range(nt):
+        for t_idx in _frames:
             eta = rasterize_to_grid(
                 variables[eta_name][t_idx], node_lon, node_lat, grid.lon, grid.lat, triangles
             )
@@ -153,7 +163,7 @@ def postprocess_case(
             v_pad = _pad_v(v)
             writer.write_snapshot(times[t_idx], eta, u_pad, v_pad, power)
 
-    power_mean = np.where(np.isfinite(power_mean), power_mean / max(nt, 1), np.nan)
+    power_mean = np.where(np.isfinite(power_mean), power_mean / max(_nframes, 1), np.nan)
     # `speed_max` already carries the triangle/land mask (NaN outside the mesh),
     # unlike `power_mean` which was NaN->0 accumulated above. Use it so the
     # power-density raster is not filled across the whole bounding box.

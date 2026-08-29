@@ -10,7 +10,7 @@ domain:
 
 bathymetry:
   source: gebco                 # gebco | file
-  path: data/GEBCO_27_Aug_2026_0805e9b79dd8/gebco_2026_n22.0_s4.0_w112.0_e128.0.nc
+  path: data/GEBCO_28_Aug_2026_0bcab7925fa2/gebco_2026_n22.0_s4.0_w112.0_e128.0.nc
   min_depth: 2.0                # enforce minimum depth [m]
   max_depth: 6000.0             # clip unrealistic depths
   land_shapefile: data/philippines_landmass.geojson
@@ -72,6 +72,9 @@ telemac2d:
         right: liquid
         top: solid
         bottom: solid
+      phase_speed_mps: 20.0             # tidal phase speed [m/s]; imposes a propagating
+                                        # tide (through-flow) instead of a standing wave
+      propagation_axis: lon             # direction the boundary tide travels
       cluster_radius_km: 15.0          # hotspot clustering radius
       margin_km: 10.0                  # buffer added around each cluster
       max_regions: 3                    # top-N clusters to refine

@@ -1,14 +1,9 @@
-# --- Downloaded datasets (large, obtained externally) ---
+# --- Data / outputs (large, local only) ---
 data/*
 !data/.gitkeep
-
-# --- Model output (generated at runtime) ---
 output/*
 !output/.gitkeep
-
-# --- TELEMAC refinement cases (generated at runtime) ---
-cases/*
-cases_strait/
+cases/
 
 # --- Python ---
 __pycache__/
@@ -19,14 +14,11 @@ __pycache__/
 dist/
 build/
 
-# --- Jupyter ---
-.ipynb_checkpoints/
-
 # --- macOS ---
 .DS_Store
 ._*
 
-# --- IDE / editor ---
+# --- IDE ---
 .vscode/
 .idea/
 *.swp
@@ -35,5 +27,3 @@ build/
 
 # --- GeoTIFF aux ---
 *.tif.aux.xml
-test_output/
-output_ci/

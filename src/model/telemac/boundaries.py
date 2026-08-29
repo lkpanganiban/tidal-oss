@@ -84,26 +84,43 @@ def classify_boundary_points(
     return is_liquid
 
 
-def write_cli(mesh: RefinementMesh, is_liquid: list[bool], path: str) -> None:
+def write_cli(
+    mesh: RefinementMesh,
+    is_liquid: list[bool],
+    path: str,
+    segments: list[list[int]] | None = None,
+) -> None:
     """Write the TELEMAC ``.cli`` boundary-conditions file.
 
     TELEMAC v7/v8 expects 13 whitespace-separated columns per boundary point
     (in IPOBO order)::
 
-        LIEBOR LIUBOR LIVBOR 0.0 0.0 0.0 0.0 LITBOR 0.0 0.0 0.0 NODE IPOBO
+        LIEBOR LIUBOR LIVBOR 0.0 0.0 0.0 0.0 NUMLIQ 0.0 0.0 0.0 NODE IPOBO
 
     where ``NODE`` is the global (1-based) mesh-node index of the point and
     ``IPOBO`` is the 1-based boundary-point counter.  ``LIEBOR=5`` marks a
-    liquid (prescribed-elevation) point; ``LIEBOR=2`` a solid wall.
+    liquid (prescribed-elevation) point and the 8th column (``NUMLIQ``) is the
+    1-based index of the liquid boundary segment that point belongs to -- it
+    must match a column of the ``.liq`` file.  ``LIEBOR=2`` marks a solid wall.
     """
     geom = mesh.geometry
     ipobo = geom.ipobo
     nbnd = int((ipobo > 0).sum())
+
+    # IPOBO (1-based) -> liquid-boundary segment index (1-based).
+    seg_of_k: dict[int, int] = {}
+    if segments:
+        for idx, seg in enumerate(segments, start=1):
+            for k in seg:
+                seg_of_k[k] = idx
+
     lines = []
     for k in range(1, nbnd + 1):
         node = int(np.where(ipobo == k)[0][0]) + 1  # 1-based global node
         if is_liquid[k - 1]:
-            liebor, liubor, livbor, litbor = LIQUID_ELEVATION, FREE, FREE, FREE
+            liebor, liubor, livbor = LIQUID_ELEVATION, FREE, FREE
+            # Column 8 is the liquid-boundary number, NOT a "type".
+            litbor = seg_of_k.get(k, 1)
         else:
             liebor, liubor, livbor, litbor = (
                 SOLID_WALL,
@@ -146,10 +163,12 @@ def write_liq(
         nliq = ncols
 
     header = ["T"] + [f"SL({i})" for i in range(1, nliq + 1)]
-    units = ["s"] + ["m"] * nliq
     with open(path, "w") as f:
+        # FRLIQ format: the first line must begin with ``T`` (the time keyword)
+        # followed by the ``SL(i)`` variable names, then one data record per
+        # time step: ``<time> SL(1) SL(2) ...``.  No title or units line --
+        # TELEMAC reads the leading ``T`` as the header marker.
         f.write(" ".join(header) + "\n")
-        f.write(" ".join(units) + "\n")
         for t_idx in range(nt):
             parts = [f"{times[t_idx]:.3f}"]
             parts.extend(f"{val:.6e}" for val in liquid_series[t_idx, :nliq])
@@ -197,21 +216,6 @@ def _phase_lag_seconds(
     return float(dist) / float(phase_speed)
 
 
-def _group_segments(is_liquid: list[bool]) -> list[list[int]]:
-    """Group liquid boundary indices (in IPOBO order) into contiguous segments."""
-    segments: list[list[int]] = []
-    current: list[int] = []
-    for k in range(1, len(is_liquid) + 1):
-        if is_liquid[k - 1]:
-            if current and k != current[-1] + 1:
-                segments.append(current)
-                current = []
-            current.append(k)
-    if current:
-        segments.append(current)
-    return segments
-
-
 def generate_boundaries(
     mesh: RefinementMesh,
     config: dict,
@@ -224,12 +228,14 @@ def generate_boundaries(
 ) -> BoundarySet:
     """Create ``.cli`` and ``.liq`` for a refinement mesh.
 
-    The liquid boundary points are grouped into contiguous segments (separated
-    by solid walls).  TELEMAC treats each segment as one liquid boundary and
-    prescribes a *uniform* elevation along it, so we emit one ``.liq`` column per
-    segment: ``SL(1)`` for the first segment, ``SL(2)`` for the second, etc.
-    Imposing a different phase on each segment (see :func:`_phase_lag_seconds`)
-    is what drives through-flow instead of a standing wave.
+    Every liquid boundary point becomes its own liquid boundary: TELEMAC
+    prescribes a *uniform* elevation per boundary, and grouping opposite sides
+    of the box into one segment (which contiguous IPOBO grouping does when the
+    boundary ordering interleaves the edges) would force them *identically*
+    and forbid any east--west gradient.  Per-point nesting gives each point
+    the GOT tide at its exact location plus the propagation ramp from
+    :func:`_phase_lag_seconds`, which is what drives through-flow instead of
+    a uniform rise-and-fall.
     """
     from model.forcing import build_tidal_boundary, read_tidal_constituents
 
@@ -253,15 +259,15 @@ def generate_boundaries(
     else:
         is_liquid = classify_boundary_points(mesh, edge_types)
 
-    cli_path = f"{cas_dir}/mesh.cli"
-    liq_path = f"{cas_dir}/mesh.liq"
-    write_cli(mesh, is_liquid, cli_path)
-
     liquid_point_order = [k for k in range(1, nbnd + 1) if is_liquid[k - 1]]
     liquid_node_global = [int(np.where(ipobo == k)[0][0]) for k in liquid_point_order]
 
-    segments = _group_segments(is_liquid)
+    segments = [[k] for k in liquid_point_order]
     n_segments = len(segments)
+
+    cli_path = f"{cas_dir}/mesh.cli"
+    liq_path = f"{cas_dir}/mesh.liq"
+    write_cli(mesh, is_liquid, cli_path, segments=segments)
 
     if segments:
         # Representative (mean) location of each liquid-boundary segment, plus the

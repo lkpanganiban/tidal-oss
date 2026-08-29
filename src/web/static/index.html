@@ -302,6 +302,16 @@ body {
 .turbine-select:focus { outline: none; border-color: var(--accent); }
 .turbine-select option { background: var(--panel-solid); color: var(--text); }
 
+.dataset-select {
+  width: 100%; margin: 4px 0 2px;
+  background: var(--panel-solid); color: var(--text);
+  border: 1px solid var(--border); border-radius: 9px;
+  padding: 8px 10px; font: inherit; font-size: 12.5px; cursor: pointer;
+}
+.dataset-select:focus { outline: none; border-color: var(--accent); }
+.dataset-select option { background: var(--panel-solid); color: var(--text); }
+.dataset-hint { font-size: 10.5px; color: var(--muted); margin-top: 4px; }
+
 /* area analysis */
 #area-hint { font-size: 12px; color: var(--text-dim); line-height: 1.5; }
 .btn-row { display: flex; gap: 8px; margin-top: 10px; }
@@ -449,6 +459,20 @@ body {
 <!-- ── Left dock ─────────────────────────────────────────── -->
 
 <div id="dock">
+
+  <div class="card" id="card-dataset">
+    <div class="card-head" onclick="toggleCard('card-dataset')">
+      <h3>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h18v18H3z"/><path d="M3 9h18M9 21V9"/></svg>
+        Dataset
+      </h3>
+      <span class="chev">▼</span>
+    </div>
+    <div class="card-body">
+      <select id="dataset-select" class="dataset-select"></select>
+      <div class="dataset-hint" id="dataset-engine"></div>
+    </div>
+  </div>
 
   <div class="card" id="card-layers">
     <div class="card-head" onclick="toggleCard('card-layers')">
@@ -635,7 +659,13 @@ const state = {
   turbinePerf: null, // last /api/turbine_performance response
   turbineChart: null,
   pcurveChart: null,
+  region: '',        // selected dataset ('' = Python screening; else telemac/<id>)
 };
+
+// Query-string suffix that scopes a request to the active dataset.
+function regionParam(prefix) {
+  return state.region ? prefix + 'region=' + encodeURIComponent(state.region) : '';
+}
 
 // Resolves once the map style has finished loading (sources/layers may only
 // be added after that — MapLibre rejects earlier calls with
@@ -753,9 +783,18 @@ function applyBasemap(name) {
   state.baseMap = name;
 }
 
+// Centre the view on the model domain so the (ocean) data layers are visible
+// on load.  The static map centre is inland (Baguio), where every ocean layer
+// is NaN/transparent — opening there makes toggling look like nothing renders.
+function flyToDataExtent(metaByLayer) {
+  const bb = metaByLayer && metaByLayer['power'] && metaByLayer['power'].bounds;
+  if (!bb) return;
+  state.map.fitBounds([[bb.west, bb.south], [bb.east, bb.north]], { padding: 48, duration: 0 });
+}
+
 // ── Layer manager ──────────────────────────────────────────
 
-function layerTileURL(layer) { return `${API}/tiles/${layer}/{z}/{x}/{y}.png`; }
+function layerTileURL(layer) { return `${API}/tiles/${layer}/{z}/{x}/{y}.png${regionParam('?')}`; }
 
 function buildLayerManager(metaByLayer) {
   const list = $('layer-list');
@@ -863,7 +902,7 @@ async function inspectPoint(lngLat) {
     .filter((n) => state.layers[n] && state.layers[n].meta)
     .map(async (n) => {
       try {
-        const r = await fetch(`${API}/query?lat=${lat.toFixed(5)}&lon=${lng.toFixed(5)}&layer=${n}`);
+        const r = await fetch(`${API}/query?lat=${lat.toFixed(5)}&lon=${lng.toFixed(5)}&layer=${n}${regionParam('&')}`);
         if (r.ok) return { layer: n, value: (await r.json()).value };
       } catch (e) { /* ignore */ }
       return { layer: n, value: null };
@@ -888,7 +927,7 @@ async function inspectPoint(lngLat) {
 async function loadTimeseries(lat, lng) {
   const canvas = $('ts-chart');
   try {
-    const r = await fetch(`${API}/timeseries?lat=${lat.toFixed(5)}&lon=${lng.toFixed(5)}`);
+    const r = await fetch(`${API}/timeseries?lat=${lat.toFixed(5)}&lon=${lng.toFixed(5)}${regionParam('&')}`);
     if (!r.ok) {
       $('chart-wrap').style.display = 'none';
       return;
@@ -949,7 +988,7 @@ async function loadTurbineSpecs() {
 async function loadTurbinePerformance(lat, lng) {
   const panel = ['turbine-select', 'turbine-stats', 'turbine-chart-wrap', 'pcurve-wrap'];
   try {
-    const r = await fetch(`${API}/turbine_performance?lat=${lat.toFixed(5)}&lon=${lng.toFixed(5)}`);
+    const r = await fetch(`${API}/turbine_performance?lat=${lat.toFixed(5)}&lon=${lng.toFixed(5)}${regionParam('&')}`);
     if (!r.ok) { hideTurbinePanel(true); return; }
     state.turbinePerf = await r.json();
     const sel = $('turbine-select');
@@ -1136,7 +1175,7 @@ async function computeAreaStats() {
   const eff = parseInt($('f-eff').value) / 100;
   $('area-results').innerHTML = '<div class="hs-empty">Computing…</div>';
   try {
-    const r = await fetch(API + '/area_stats', {
+    const r = await fetch(API + '/area_stats' + regionParam('?'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ polygon, efficiency: eff }),
@@ -1172,7 +1211,7 @@ function renderAreaResults(d, eff) {
 
 async function loadHotspots() {
   try {
-    const r = await fetch(API + '/hotspots');
+    const r = await fetch(API + '/hotspots' + regionParam('?'));
     if (!r.ok) { $('hotspot-list').innerHTML = '<div class="hs-empty">Run the model to generate hotspots.</div>'; return; }
     const fc = await r.json();
     state.hotspots = fc.features;
@@ -1258,7 +1297,7 @@ function bindResourceFilters() {
 
 async function fetchResource(minPower, depthMin, depthMax, eff) {
   try {
-    const url = `${API}/resource?min_power=${minPower}&depth_min=${depthMin}&depth_max=${depthMax}&efficiency=${eff / 100}`;
+    const url = `${API}/resource?min_power=${minPower}&depth_min=${depthMin}&depth_max=${depthMax}&efficiency=${eff / 100}${regionParam('&')}`;
     const r = await fetch(url);
     if (!r.ok) throw new Error();
     const d = await r.json();
@@ -1345,23 +1384,62 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && measureMode) { measureMode = false; measurePts = []; clearMeasureLayer(); $('btn-measure').classList.remove('active'); }
 });
 
+// ── Dataset switching (Python screening ↔ TELEMAC-2D regions) ──
+
+function clearDataLayers() {
+  Object.keys(state.layers).forEach((name) => {
+    if (state.map.getLayer(layerId(name))) state.map.removeLayer(layerId(name));
+    if (state.map.getSource('src-' + name)) state.map.removeSource('src-' + name);
+  });
+  state.layers = {};
+  ['hot-pts', 'hot-labels'].forEach((l) => {
+    if (state.map.getLayer(l)) state.map.removeLayer(l);
+  });
+  if (state.map.getSource('hot-src')) state.map.removeSource('hot-src');
+  state.hotspots = [];
+}
+
+async function loadDataset(region) {
+  state.region = region || '';
+  try {
+    const r = await fetch(API + '/layers' + regionParam('?'));
+    const data = await r.json();
+    clearDataLayers();
+    buildLayerManager(data.layers);
+    flyToDataExtent(data.layers);
+    if (!data.results_nc) console.warn('results.nc not found — time series unavailable');
+  } catch (e) {
+    $('layer-list').innerHTML = '<div class="hs-empty">API unavailable — run the web service with model outputs.</div>';
+  }
+  loadHotspots();
+}
+
+async function initDatasets() {
+  const sel = $('dataset-select');
+  if (!sel) return;
+  try {
+    const r = await fetch(API + '/datasets');
+    if (!r.ok) { sel.style.display = 'none'; return; }
+    const d = await r.json();
+    sel.innerHTML = d.datasets
+      .map((ds) => `<option value="${ds.id}">${ds.label}</option>`)
+      .join('');
+    sel.value = '';
+    sel.addEventListener('change', () => loadDataset(sel.value));
+  } catch (e) {
+    sel.style.display = 'none';
+  }
+}
+
 // ── Boot ───────────────────────────────────────────────────
 
 (async function boot() {
   initMap();
   await mapLoadPromise;  // wait for the style before adding sources/layers
 
-  // Fetch layer metadata and build the manager
-  try {
-    const r = await fetch(API + '/layers');
-    const data = await r.json();
-    buildLayerManager(data.layers);
-    if (!data.results_nc) console.warn('results.nc not found — time series unavailable');
-  } catch (e) {
-    $('layer-list').innerHTML = '<div class="hs-empty">API unavailable — run the web service with model outputs.</div>';
-  }
+  await initDatasets();
+  await loadDataset('');
 
-  loadHotspots();
   bindResourceFilters();
   loadTurbineSpecs();
 })();
