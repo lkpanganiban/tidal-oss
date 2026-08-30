@@ -65,15 +65,24 @@ def test_selafin_result_read(tmp_path):
 
     path = tmp_path / "r2d.slf"
     with open(path, "wb") as f:
-        title = ("RESULT".ljust(72) + SERAFIN_MAGIC.decode()).encode()[:80].ljust(80, b" ")
+        title = (
+            ("RESULT".ljust(72) + SERAFIN_MAGIC.decode()).encode()[:80].ljust(80, b" ")
+        )
         _write_record(f, title)
         _write_record(f, (_pack_int5(len(var_names)) + _pack_int5(0)).ljust(80, b" "))
         for name in var_names:
             rec = (name[:16].ljust(16) + "M".ljust(16)).encode()
             _write_record(f, rec)
-        iparam = b"".join(_pack_int5(v) for v in [1, 0, 0, 0, 0, 0, 0, 0, 0, 0]).ljust(80, b" ")
+        iparam = b"".join(_pack_int5(v) for v in [1, 0, 0, 0, 0, 0, 0, 0, 0, 0]).ljust(
+            80, b" "
+        )
         _write_record(f, iparam)
-        _write_record(f, (_pack_int5(ikle.shape[0]) + _pack_int5(x.shape[0]) + _pack_int5(3)).ljust(80, b" "))
+        _write_record(
+            f,
+            (_pack_int5(ikle.shape[0]) + _pack_int5(x.shape[0]) + _pack_int5(3)).ljust(
+                80, b" "
+            ),
+        )
         _write_record(f, (ikle + 1).astype(np.int32).ravel().tobytes())
         ipobo = np.array([1, 2, 3, 4], dtype=np.int32)
         _write_record(f, ipobo.tobytes())
@@ -105,7 +114,13 @@ def test_mesh_generation_from_grid(tmp_path):
 def test_steering_default_and_template(tmp_path):
     from model.telemac.steering import build_steering
 
-    cfg = {"steering": {"time_step": 25.0, "duration_days": 10, "variables": ["ELEVATION Z"]}}
+    cfg = {
+        "steering": {
+            "time_step": 25.0,
+            "duration_days": 10,
+            "variables": ["ELEVATION Z"],
+        }
+    }
     build_steering(str(tmp_path), 25.0, 100, cfg)
     text = (tmp_path / "case.cas").read_text()
     assert "TIME STEP : 25" in text
@@ -157,7 +172,12 @@ def test_boundary_files_synthetic(tmp_path):
     times, _ = compute_times(1.0, 0.5)
     mesh_cfg = {
         "boundary": {
-            "edge_types": {"left": "liquid", "right": "liquid", "top": "solid", "bottom": "solid"}
+            "edge_types": {
+                "left": "liquid",
+                "right": "liquid",
+                "top": "solid",
+                "bottom": "solid",
+            }
         }
     }
     tidal = {"source": "synthetic", "constituents": ["M2"], "amplitude": 0.5}
@@ -194,7 +214,12 @@ def test_postprocess_guarded(tmp_path):
     )
     config = {
         "telemac2d": {
-            "mesh": {"source": "generated"},
+            "mesh": {
+                "source": "generated",
+                # Keep the test hermetic: never auto-detect an on-disk
+                # parent results.nc (e.g. a stale ./output/results.nc).
+                "boundary": {"parent_results_nc": None},
+            },
             "steering": {"time_step": 30.0, "duration_days": 1},
             "postprocess": {"output_grid_resolution_km": 0.5},
         },
@@ -202,7 +227,13 @@ def test_postprocess_guarded(tmp_path):
         "output": {"hotspot_threshold": 200.0},
     }
     cases_dir = tmp_path / "cases"
-    pc = prepare_case(region, config, {"source": "synthetic", "constituents": ["M2"]}, str(cases_dir), grid=grid)
+    pc = prepare_case(
+        region,
+        config,
+        {"source": "synthetic", "constituents": ["M2"]},
+        str(cases_dir),
+        grid=grid,
+    )
 
     build_steering(str(pc.case_dir), 30.0, 10, config["telemac2d"])
     result_path = os.path.join(pc.case_dir, "r2d.slf")
@@ -215,8 +246,15 @@ def test_postprocess_guarded(tmp_path):
         _write_record(f, (_pack_int5(3) + _pack_int5(0)).ljust(80, b" "))
         for name in ["ELEVATION Z", "VELOCITY U", "VELOCITY V"]:
             _write_record(f, (name[:16].ljust(16) + "M".ljust(16)).encode())
-        _write_record(f, b"".join(_pack_int5(v) for v in [1, 0, 0, 0, 0, 0, 0, 0, 0, 0]).ljust(80, b" "))
-        _write_record(f, (_pack_int5(2) + _pack_int5(4) + _pack_int5(3)).ljust(80, b" "))
+        _write_record(
+            f,
+            b"".join(_pack_int5(v) for v in [1, 0, 0, 0, 0, 0, 0, 0, 0, 0]).ljust(
+                80, b" "
+            ),
+        )
+        _write_record(
+            f, (_pack_int5(2) + _pack_int5(4) + _pack_int5(3)).ljust(80, b" ")
+        )
         _write_record(f, (ikle + 1).astype(np.int32).ravel().tobytes())
         _write_record(f, np.array([1, 2, 3, 4], dtype=np.int32).tobytes())
         _write_record(f, x.astype(np.float32).tobytes())
@@ -227,7 +265,9 @@ def test_postprocess_guarded(tmp_path):
             _write_record(f, np.full(4, 0.5, dtype=np.float32).tobytes())
             _write_record(f, np.full(4, 0.5, dtype=np.float32).tobytes())
 
-    summary = postprocess_case(str(pc.case_dir), config, str(tmp_path / "out"), region_id="region-001")
+    summary = postprocess_case(
+        str(pc.case_dir), config, str(tmp_path / "out"), region_id="region-001"
+    )
     assert os.path.isfile(summary["results_nc"])
     assert os.path.isfile(summary["tidal_power_density_tif"])
     assert summary["n_timesteps"] == 11

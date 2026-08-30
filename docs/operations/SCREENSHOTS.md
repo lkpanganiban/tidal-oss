@@ -3,9 +3,9 @@
 This page documents the full, *actually-executed* pipeline that turns real
 input data (GEBCO bathymetry, GOT4.10c tidal harmonics, a land mask) into a
 hydrodynamic model run, a TELEMAC-2D refinement, and the interactive web map
-served by the MSP tool.  It is the companion to `docs/WORKFLOW.md` and
-`docs/TELEMAC.md` and shows every stage, the exact commands, and the
-screenshots captured at each step.
+served by the MSP tool.  It is the companion to
+`../architecture/WORKFLOW.md` and `../engines/TELEMAC.md` and shows every stage,
+the exact commands, and the screenshots captured at each step.
 
 ## Prerequisites
 
@@ -44,7 +44,7 @@ The refinement workflow is driven by `src/model/telemac/`.  Two configs ship:
 * `scripts/telemac_strait_config.yaml` — a Surigao Strait refinement (single
   hotspot around 121.5°E, 6.1°N) with `edge_types: top/bottom = liquid`,
   `propagation_axis: lat`, `phase_speed_mps: 2.0` so the tide propagates
-  through the strait instead of sloshing (see `docs/TELEMAC.md`).  The
+  through the strait instead of sloshing (see `../engines/TELEMAC.md`).  The
   screenshots in this repo were captured from this run.
 
 Prepare a case — cluster the screening hotspots and generate the mesh /
@@ -180,7 +180,7 @@ matters) and saves a named PNG per state at 1440×900:
 * The `.liq` file is written **one column per liquid boundary segment** (not
   per node); each segment carries its own imposed phase lag, which is what
   makes the strait boundaries genuinely out of phase (see
-  `docs/TELEMAC.md`).  The strait meshes are land-aware: coastal edges become
+  `../engines/TELEMAC.md`).  The strait meshes are land-aware: coastal edges become
   solid walls, open edges become the two liquid segments.
 * `scripts/capture_screenshots.py` takes `--base <url>`; the server port must
   match (5055 here, since macOS port 5000 is blocked by ControlCenter).

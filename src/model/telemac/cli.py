@@ -18,15 +18,12 @@ import json
 import os
 
 from ..config import load_config
-from .case import prepare_case
-from .hotspots import cluster_hotspots, save_regions
+from ..run import build_screening_grid, prepare_regions
 from .postprocess import postprocess_case
 from .runner import run_all, run_case
 
 
 def _build_grid(config):
-    from ..run import build_screening_grid
-
     return build_screening_grid(config)
 
 
@@ -40,36 +37,9 @@ def _prepare(args, config) -> list:
         raise FileNotFoundError(f"screening hotspots not found: {hotspots_path}")
 
     grid = _build_grid(config)
-    telemac_cfg = config.get("telemac2d", {})
-    mesh_cfg = telemac_cfg.get("mesh", {})
-    boundary_cfg = mesh_cfg.get("boundary", {})
-
-    regions = cluster_hotspots(
-        hotspots_path,
-        cluster_radius_km=float(boundary_cfg.get("cluster_radius_km", 15.0)),
-        margin_km=float(boundary_cfg.get("margin_km", 10.0)),
-        max_regions=int(boundary_cfg.get("max_regions", 3)),
-    )
-    cases_dir = args.cases_dir or telemac_cfg.get("cases_dir", "cases")
-    os.makedirs(cases_dir, exist_ok=True)
-    save_regions(regions, os.path.join(cases_dir, "regions.json"))
-
-    prepared = []
-    for region in regions:
-        supplied = (
-            mesh_cfg.get("supplied_mesh")
-            if mesh_cfg.get("source") == "supplied"
-            else None
-        )
-        pc = prepare_case(
-            region,
-            config,
-            config.get("tidal_forcing", {}),
-            cases_dir,
-            grid=grid,
-            supplied_mesh=supplied,
-        )
-        prepared.append(pc)
+    cases_dir = args.cases_dir or config.get("telemac2d", {}).get("cases_dir", "cases")
+    prepared = prepare_regions(config, grid, hotspots_path, cases_dir)
+    for _, pc in prepared:
         print(f"[telemac] prepared case: {pc.case_dir}")
     return prepared
 
@@ -103,12 +73,10 @@ def cmd_pipeline(args, config):
     prepared = _prepare(args, config)
     docker = bool(config.get("telemac2d", {}).get("docker", True))
     out_dir = os.environ.get("OUTPUT_DIR") or config["output"]["dir"]
-    for pc in prepared:
+    for region, pc in prepared:
         run_case(pc.case_dir, docker=docker, dry_run=args.dry_run)
-        region_out = os.path.join(out_dir, "telemac", os.path.basename(pc.case_dir))
-        postprocess_case(
-            pc.case_dir, config, region_out, region_id=os.path.basename(pc.case_dir)
-        )
+        region_out = os.path.join(out_dir, "telemac", region.id)
+        postprocess_case(pc.case_dir, config, region_out, region_id=region.id)
         print(f"[telemac] post-processed -> {region_out}")
 
 

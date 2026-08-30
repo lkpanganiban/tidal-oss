@@ -3,7 +3,7 @@
 This document summarises the implementation plan for the open-source
 Philippine tidal-current energy assessment workflow.  See
 [`README.md`](../README.md) for quick start and
-[`MODEL.md`](MODEL.md) for the physics and methodology.
+[`concepts/MODEL.md`](concepts/MODEL.md) for the physics and methodology.
 
 ## Two-phase workflow
 
@@ -36,8 +36,9 @@ Phase A: Screening                                Phase B: Web Visualization
 
 3. **Refinement (Phase C)** — TELEMAC-2D finite-element modelling of the top
    hotspots at higher resolution, driven by the screening results and run
-   inside a public Docker image. See `docs/TELEMAC.md`, `docs/WORKFLOW.md`,
-   `docs/CASE_AUTHORING.md`, `docs/POSTPROCESSING.md`, `docs/TROUBLESHOOTING.md`.
+   inside a public Docker image. See `engines/TELEMAC.md`,
+   `architecture/WORKFLOW.md`, `engines/CASE_AUTHORING.md`,
+   `engines/POSTPROCESSING.md`, `operations/TROUBLESHOOTING.md`.
 
 ## Milestones
 

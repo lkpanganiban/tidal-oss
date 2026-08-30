@@ -147,7 +147,9 @@ for _name in LAYERS:
         try:
             LAYERS[_name]["vmax"] = float(_env_vmax)
         except ValueError:
-            logger.warning("Ignoring invalid TIDAL_%s_VMAX=%s", _name.upper(), _env_vmax)
+            logger.warning(
+                "Ignoring invalid TIDAL_%s_VMAX=%s", _name.upper(), _env_vmax
+            )
 
 
 def _resolve_root(region: str | None) -> str:
@@ -177,20 +179,25 @@ def _hotspots_path(region: str | None = None) -> str:
     return os.path.join(_resolve_root(region), "hotspots.geojson")
 
 
+def _bounds_dict(src) -> dict:
+    """Bounding box (EPSG:4326) of an open raster source as a dict."""
+    from rasterio.warp import transform_bounds
+
+    b = src.bounds
+    if src.crs is not None and src.crs.to_epsg() != 4326:
+        bb = transform_bounds(src.crs, "EPSG:4326", b.left, b.bottom, b.right, b.top)
+    else:
+        bb = (b.left, b.bottom, b.right, b.top)
+    return {"west": bb[0], "south": bb[1], "east": bb[2], "north": bb[3]}
+
+
 def _root_bounds(root: str) -> dict | None:
     """Bounding box (EPSG:4326) of a dataset's power raster, or None."""
     src = _open_raster(os.path.join(root, LAYERS["power"]["file"]))
     if src is None:
         return None
     try:
-        from rasterio.warp import transform_bounds
-
-        b = src.bounds
-        if src.crs is not None and src.crs.to_epsg() != 4326:
-            bb = transform_bounds(src.crs, "EPSG:4326", b.left, b.bottom, b.right, b.top)
-        else:
-            bb = (b.left, b.bottom, b.right, b.top)
-        return {"west": bb[0], "south": bb[1], "east": bb[2], "north": bb[3]}
+        return _bounds_dict(src)
     finally:
         src.close()
 
@@ -261,9 +268,7 @@ def _render_tile(src, z: int, x: int, y: int, layer: str) -> io.BytesIO | None:
     west_m, south_m, east_m, north_m = transform_bounds(
         "EPSG:4326", "EPSG:3857", west, south, east, north
     )
-    dst_transform = from_bounds(
-        west_m, south_m, east_m, north_m, TILE_SIZE, TILE_SIZE
-    )
+    dst_transform = from_bounds(west_m, south_m, east_m, north_m, TILE_SIZE, TILE_SIZE)
     data = np.full((TILE_SIZE, TILE_SIZE), np.nan, dtype=np.float32)
     reproject(
         source=src.read(1),
@@ -338,21 +343,7 @@ def _layer_metadata(layer: str, region: str | None = None) -> dict | None:
     if src is None:
         return None
     try:
-        from rasterio.warp import transform_bounds
-
-        bounds = src.bounds
-        if src.crs is not None and src.crs.to_epsg() != 4326:
-            bbox_4326 = transform_bounds(
-                src.crs,
-                "EPSG:4326",
-                bounds.left,
-                bounds.bottom,
-                bounds.right,
-                bounds.top,
-            )
-        else:
-            bbox_4326 = (bounds.left, bounds.bottom, bounds.right, bounds.top)
-
+        bounds = _bounds_dict(src)
         stats = _raster_stats(src)
     finally:
         src.close()
@@ -362,12 +353,7 @@ def _layer_metadata(layer: str, region: str | None = None) -> dict | None:
         "label": meta["label"],
         "units": meta["units"],
         "description": meta["description"],
-        "bounds": {
-            "west": bbox_4326[0],
-            "south": bbox_4326[1],
-            "east": bbox_4326[2],
-            "north": bbox_4326[3],
-        },
+        "bounds": bounds,
         "crs": "EPSG:4326",
         "stats": stats,
         "vmin": meta["vmin"],
@@ -457,6 +443,42 @@ def _read_layer_array(
 # ---------------------------------------------------------------------------
 
 
+def _resource_summary(
+    mask: np.ndarray, power: np.ndarray, transform, efficiency: float
+) -> dict:
+    """Aggregate resource statistics for the cells selected by *mask*.
+
+    Shared by :func:`_resource_totals` and :func:`_area_stats`: cell count,
+    area (cos(lat)-corrected), mean/max/p95 power density, and gross /
+    extractable / annual energy.  Callers guard the empty-mask case themselves
+    and may add layer-specific fields (e.g. ``depth_range_m``).
+    """
+    n = int(mask.sum())
+    res_x = transform.a
+    res_y = -transform.e
+
+    # Area via cell counts with cos(lat) correction on the mask centroid
+    rows, cols = np.where(mask)
+    lat_c = transform.f + (rows + 0.5) * transform.e
+    cell_area = _cell_area_m2(float(np.mean(lat_c)), res_x, res_y)
+
+    sel = power[mask]
+    mean_pd = float(np.mean(sel))
+    area_m2 = n * cell_area
+    gross_w = float(np.sum(sel) * cell_area)
+
+    return {
+        "n_cells": n,
+        "area_km2": area_m2 / 1e6,
+        "mean_power_density": round(mean_pd, 2),
+        "max_power_density": round(float(np.max(sel)), 2),
+        "p95_power_density": round(float(np.percentile(sel, 95)), 2),
+        "gross_mw": round(gross_w / 1e6, 3),
+        "extractable_mw": round(gross_w * efficiency / 1e6, 3),
+        "aep_gwh_yr": round(gross_w * efficiency * 8760.0 / 1e9, 3),
+    }
+
+
 def _resource_totals(
     min_power: float,
     depth_min: float | None,
@@ -481,8 +503,7 @@ def _resource_totals(
             if depth_max is not None:
                 mask &= depth <= depth_max
 
-    n = int(mask.sum())
-    if n == 0:
+    if int(mask.sum()) == 0:
         return {
             "n_cells": 0,
             "area_km2": 0.0,
@@ -492,29 +513,7 @@ def _resource_totals(
             "aep_gwh_yr": 0.0,
         }
 
-    res_x = transform.a
-    res_y = -transform.e
-
-    # Area via cell counts with cos(lat) correction on the mask centroid
-    rows, cols = np.where(mask)
-    lat_c = transform.f + (rows + 0.5) * transform.e
-    cell_area = _cell_area_m2(float(np.mean(lat_c)), res_x, res_y)
-
-    sel = power[mask]
-    mean_pd = float(np.mean(sel))
-    area_m2 = n * cell_area
-    gross_w = float(np.sum(sel) * cell_area)
-
-    return {
-        "n_cells": n,
-        "area_km2": area_m2 / 1e6,
-        "mean_power_density": round(mean_pd, 2),
-        "max_power_density": round(float(np.max(sel)), 2),
-        "p95_power_density": round(float(np.percentile(sel, 95)), 2),
-        "gross_mw": round(gross_w / 1e6, 3),
-        "extractable_mw": round(gross_w * efficiency / 1e6, 3),
-        "aep_gwh_yr": round(gross_w * efficiency * 8760.0 / 1e9, 3),
-    }
+    return _resource_summary(mask, power, transform, efficiency)
 
 
 @lru_cache(maxsize=64)
@@ -559,11 +558,7 @@ def _area_stats(
     valid = ~(np.isnan(power) | (power <= 0))
     mask = inside & valid
 
-    n = int(mask.sum())
-    res_x = transform.a
-    res_y = -transform.e
-    rows, cols = np.where(mask)
-    if n == 0:
+    if int(mask.sum()) == 0:
         return {
             "n_cells": 0,
             "area_km2": 0.0,
@@ -572,12 +567,9 @@ def _area_stats(
             "extractable_mw": 0.0,
             "aep_gwh_yr": 0.0,
         }
-    lat_c = transform.f + (rows + 0.5) * transform.e
-    cell_area = _cell_area_m2(float(np.mean(lat_c)), res_x, res_y)
 
-    sel = power[mask]
-    area_m2 = n * cell_area
-    gross_w = float(np.sum(sel) * cell_area)
+    summary = _resource_summary(mask, power, transform, efficiency)
+    summary["area_km2"] = round(summary["area_km2"], 3)
 
     # Depth range inside the polygon (when available)
     depth_range = None
@@ -585,17 +577,9 @@ def _area_stats(
     if depth is not None and np.any(inside & ~np.isnan(depth)):
         dv = depth[inside & ~np.isnan(depth)]
         depth_range = [round(float(dv.min()), 1), round(float(dv.max()), 1)]
+    summary["depth_range_m"] = depth_range
 
-    return {
-        "n_cells": n,
-        "area_km2": round(area_m2 / 1e6, 3),
-        "mean_power_density": round(float(np.mean(sel)), 2),
-        "max_power_density": round(float(np.max(sel)), 2),
-        "gross_mw": round(gross_w / 1e6, 3),
-        "extractable_mw": round(gross_w * efficiency / 1e6, 3),
-        "aep_gwh_yr": round(gross_w * efficiency * 8760.0 / 1e9, 3),
-        "depth_range_m": depth_range,
-    }
+    return summary
 
 
 @lru_cache(maxsize=32)

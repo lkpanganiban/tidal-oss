@@ -7,8 +7,9 @@ screening model.  This module reads the unstructured TELEMAC result file
 grid covering the refinement region, and writes exactly the same products so
 the Flask/MapLibre stack is engine-agnostic.
 
-Rasterisation uses scipy where available and falls back to inverse-distance
-weighting, so the routine never hard-fails on minimal environments.
+Rasterisation uses scipy Delaunay + barycentric weights (with a nearest-node
+fallback for target points outside the mesh footprint), so the routine never
+hard-fails on minimal environments.
 """
 
 from __future__ import annotations
@@ -18,17 +19,18 @@ import os
 
 import numpy as np
 
-from .mesh import RefinementMesh, unproject_from_local_meters
+from .mesh import unproject_from_local_meters
 from .selafin import read_serafin
 
 
-def _target_grid(mesh: RefinementMesh, resolution_m: float):
+def _target_grid(mesh_meta: dict, resolution_m: float):
+    """Build the regular lon/lat raster grid for a refinement case output."""
     from model.grid import StructuredGrid
 
-    bbox = mesh.bbox
+    bbox = mesh_meta["bbox"]
     lat0 = (
-        mesh.lat0
-        if mesh.coordinates_are_meters
+        mesh_meta["lat0"]
+        if mesh_meta["coordinates_are_meters"]
         else float(np.mean([bbox["lat_min"], bbox["lat_max"]]))
     )
     dlon = resolution_m / (111320.0 * np.cos(np.radians(lat0)))
@@ -66,7 +68,7 @@ def postprocess_case(
         write_raster_geotiff,
     )
 
-    from .mesh import rasterize_to_grid
+    from .mesh import MeshRasterizer
 
     with open(os.path.join(case_dir, "manifest.json")) as f:
         manifest = json.load(f)
@@ -99,13 +101,16 @@ def postprocess_case(
         node_lon, node_lat = node_x, node_y
         triangles = res.get("ikle")
 
-    grid = _target_grid(
-        mesh_meta_to_refinement(mesh_meta, node_lon, node_lat), resolution_m
-    )
+    grid = _target_grid(mesh_meta, resolution_m)
 
     eta_name = _first_present(variables, ["ELEVATION Z", "ELEVATION", "FREE SURFACE"])
     u_name = _first_present(variables, ["VELOCITY U", "VELOCITY UX"])
     v_name = _first_present(variables, ["VELOCITY V", "VELOCITY VY"])
+
+    # One geometry pass for all frames: Delaunay, barycentric weights, mesh
+    # footprint mask and nearest-fallback tree are computed once (seconds)
+    # instead of per frame (minutes at refinement-scale meshes).
+    rast = MeshRasterizer(node_lon, node_lat, grid.lon, grid.lat, triangles)
 
     nt = times.shape[0]
     ny, nx = grid.lat.shape
@@ -138,21 +143,9 @@ def postprocess_case(
         nc_path, grid, rho=rho, cd=cd, extra_attrs=extra_attrs, mode="w"
     ) as writer:
         for t_idx in _frames:
-            eta = rasterize_to_grid(
-                variables[eta_name][t_idx], node_lon, node_lat, grid.lon, grid.lat, triangles
-            )
-            if u_name:
-                u = rasterize_to_grid(
-                    variables[u_name][t_idx], node_lon, node_lat, grid.lon, grid.lat, triangles
-                )
-            else:
-                u = np.zeros_like(eta)
-            if v_name:
-                v = rasterize_to_grid(
-                    variables[v_name][t_idx], node_lon, node_lat, grid.lon, grid.lat, triangles
-                )
-            else:
-                v = np.zeros_like(eta)
+            eta = rast.raster(variables[eta_name][t_idx])
+            u = rast.raster(variables[u_name][t_idx]) if u_name else np.zeros_like(eta)
+            v = rast.raster(variables[v_name][t_idx]) if v_name else np.zeros_like(eta)
             speed = np.sqrt(u**2 + v**2)
             power = 0.5 * rho * speed**3
 
@@ -163,13 +156,21 @@ def postprocess_case(
             v_pad = _pad_v(v)
             writer.write_snapshot(times[t_idx], eta, u_pad, v_pad, power)
 
-    power_mean = np.where(np.isfinite(power_mean), power_mean / max(_nframes, 1), np.nan)
+    power_mean = np.where(
+        np.isfinite(power_mean), power_mean / max(_nframes, 1), np.nan
+    )
     # `speed_max` already carries the triangle/land mask (NaN outside the mesh),
     # unlike `power_mean` which was NaN->0 accumulated above. Use it so the
     # power-density raster is not filled across the whole bounding box.
     grid.mask = np.isfinite(speed_max)
     grid.h = np.where(
-        grid.mask, _raster_depth(mesh_meta, node_lon, node_lat, grid, triangles), np.nan
+        grid.mask,
+        rast.raster(
+            np.asarray(
+                mesh_meta.get("node_depth") or np.zeros_like(node_lon), dtype=np.float64
+            )
+        ),
+        np.nan,
     )
 
     power_tif = os.path.join(
@@ -205,6 +206,15 @@ def postprocess_case(
     )
     write_hotspots_geojson(grid, power_mean, threshold, geojson_path)
 
+    reconciliation = _write_reconciliation(
+        out_dir,
+        manifest,
+        config,
+        telemac_max_power=float(np.nanmax(power_mean)) if grid.mask.any() else 0.0,
+        telemac_max_speed=float(np.nanmax(speed_max)) if grid.mask.any() else 0.0,
+        region_id=region_id or manifest.get("region_id", ""),
+    )
+
     return {
         "results_nc": nc_path,
         "tidal_power_density_tif": power_tif,
@@ -214,32 +224,146 @@ def postprocess_case(
         "hotspots_geojson": geojson_path,
         "n_timesteps": nt,
         "max_power_Wm2": float(np.nanmax(power_mean)) if grid.mask.any() else 0.0,
+        "reconciliation": reconciliation,
     }
 
 
-def mesh_meta_to_refinement(mesh_meta: dict, node_lon, node_lat) -> RefinementMesh:
-    from .mesh import RefinementMesh
+def _read_window(tif_path: str, bbox: dict) -> np.ndarray | None:
+    """Read a GeoTIFF window as a float64 array with nodata mapped to NaN.
 
-    return RefinementMesh(
-        path=mesh_meta["path"],
-        geometry=None,  # type: ignore[arg-type]
-        lon0=mesh_meta["lon0"],
-        lat0=mesh_meta["lat0"],
-        node_lon=np.asarray(node_lon),
-        node_lat=np.asarray(node_lat),
-        coordinates_are_meters=mesh_meta["coordinates_are_meters"],
-        bbox=mesh_meta["bbox"],
+    Returns ``None`` when the file is missing or the window is empty.
+    """
+    import rasterio
+    from rasterio.windows import from_bounds
+
+    if not os.path.isfile(tif_path):
+        return None
+    with rasterio.open(tif_path) as src:
+        win = from_bounds(
+            bbox["lon_min"],
+            bbox["lat_min"],
+            bbox["lon_max"],
+            bbox["lat_max"],
+            src.transform,
+        )
+        data = src.read(1, window=win).astype(np.float64)
+        if src.nodata is not None:
+            data[data == src.nodata] = np.nan
+    if data.size == 0:
+        return None
+    return data
+
+
+def _write_reconciliation(
+    out_dir: str,
+    manifest: dict,
+    config: dict,
+    *,
+    telemac_max_power: float,
+    telemac_max_speed: float,
+    region_id: str,
+) -> dict:
+    """Compare the refined TELEMAC result against the screening parent.
+
+    The nationwide screening products are the parent view: this samples the
+    screening mean-power GeoTIFF inside the region bounding box and records
+    both engines' statistics in ``reconciliation.json`` so zoom-in users can
+    see how the refined estimate relates to the national one.
+    """
+    out_cfg = config.get("output", {})
+    report: dict = {
+        "region": region_id,
+        "bbox": manifest.get("bbox"),
+        "telemac_max_power_Wm2": telemac_max_power,
+        "telemac_max_speed_mps": telemac_max_speed,
+        "telemac_resolution_m": manifest.get("resolution_m"),
+        "telemac_axis": manifest.get("axis"),
+        "telemac_boundary_forcing": manifest.get("boundary_forcing"),
+    }
+    root_tif = os.path.join(
+        out_cfg.get("dir", "output/"),
+        out_cfg.get("final_geotiff", "tidal_power_density.tif"),
     )
+    speed_tif = os.path.join(
+        out_cfg.get("dir", "output/"),
+        out_cfg.get("max_speed_geotiff", "max_current_speed.tif"),
+    )
+    if os.path.isfile(root_tif):
+        try:
+            bbox = manifest.get("bbox") or {}
+            if bbox:
+                data = _read_window(root_tif, bbox)
+                if data is not None and np.isfinite(data).any():
+                    s_max = float(np.nanmax(data))
+                    s_mean = float(np.nanmean(data))
+                    report["screening_max_power_Wm2"] = s_max
+                    report["screening_mean_power_Wm2"] = s_mean
+                    if s_max > 0:
+                        report["ratio_telemac_to_screening"] = telemac_max_power / s_max
+                sdata = _read_window(speed_tif, bbox)
+                if sdata is not None and np.isfinite(sdata).any():
+                    s_speed = float(np.nanmax(sdata))
+                    report["screening_max_speed_mps"] = s_speed
+                    report["screening_speed_p95_mps"] = float(
+                        np.nanpercentile(sdata, 95)
+                    )
+                    report["screening_speed_median_mps"] = float(np.nanmedian(sdata))
+                    if s_speed > 0:
+                        report["speed_ratio_telemac_to_screening"] = (
+                            telemac_max_speed / s_speed
+                        )
+        except Exception:
+            pass
 
+        # Distribution-level comparison on the child's own raster: max-vs-max
+        # is dominated by the parent's coarse-grid jets; the bulk-field ratios
+        # show how the two engines compare away from grid-scale extremes.
+        try:
+            import rasterio
 
-def _raster_depth(mesh_meta: dict, node_lon, node_lat, grid, triangles=None) -> np.ndarray:
-    from .mesh import rasterize_to_grid
+            with rasterio.open(speed_tif) as r:
+                c = r.read(1).astype(np.float64)
+                if r.nodata is not None:
+                    c[c == r.nodata] = np.nan
+            cvalid = c[np.isfinite(c)]
+            if cvalid.size:
+                report["telemac_speed_p95_mps"] = float(np.percentile(cvalid, 95))
+                report["telemac_speed_median_mps"] = float(np.median(cvalid))
+                p95_s = report.get("screening_speed_p95_mps")
+                med_s = report.get("screening_speed_median_mps")
+                if p95_s:
+                    report["p95_speed_ratio_telemac_to_screening"] = (
+                        report["telemac_speed_p95_mps"] / p95_s
+                    )
+                if med_s:
+                    report["median_speed_ratio_telemac_to_screening"] = (
+                        report["telemac_speed_median_mps"] / med_s
+                    )
+        except Exception:
+            pass
 
-    if mesh_meta.get("node_depth") is not None:
-        depth = np.asarray(mesh_meta["node_depth"], dtype=np.float64)
-    else:
-        depth = np.zeros_like(np.asarray(node_lon))
-    return rasterize_to_grid(depth, node_lon, node_lat, grid.lon, grid.lat, triangles)
+    # Acceptance test: speed within [0.7, 1.5]x of the parent is a pass,
+    # within [0.35, 3.0]x tolerable (power is cubic in speed, so its windows
+    # are the cubes of the speed windows); anything wider needs review.
+    speed_ratio = report.get("speed_ratio_telemac_to_screening")
+    power_ratio = report.get("ratio_telemac_to_screening")
+    if speed_ratio:
+        if 0.7 <= speed_ratio <= 1.5 and (not power_ratio or power_ratio >= 0.35):
+            report["status"] = "ok"
+        elif 0.35 <= speed_ratio <= 3.0:
+            report["status"] = "tolerable"
+        else:
+            report["status"] = "review"
+        report["note"] = (
+            f"refined/parent speed ratio {speed_ratio:.2f}x; "
+            "power scales with speed cubed"
+        )
+    try:
+        with open(os.path.join(out_dir, "reconciliation.json"), "w") as f:
+            json.dump(report, f, indent=2)
+    except OSError:
+        pass
+    return report
 
 
 def _pad_u(u: np.ndarray) -> np.ndarray:

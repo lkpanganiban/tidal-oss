@@ -9,7 +9,6 @@ fast at startup instead of mid-simulation.
 from __future__ import annotations
 
 import os
-from pathlib import Path
 
 import yaml
 
@@ -111,7 +110,9 @@ def validate_config(config: dict) -> None:
         if name == "telemac2d":
             telemac_cfg = config["telemac2d"]
             if not telemac_cfg.get("image"):
-                raise ValueError("telemac2d.image must pin a public TELEMAC Docker image")
+                raise ValueError(
+                    "telemac2d.image must pin a public TELEMAC Docker image"
+                )
 
     out = config["output"]
     if out.get("hotspot_threshold", 0) <= 0:
@@ -126,8 +127,3 @@ def validate_config(config: dict) -> None:
     # Note: a bathymetry.path that points at a missing file is NOT an error
     # here — run() logs a warning and falls back to the synthetic test grid,
     # which is the documented no-data behaviour (see README).
-
-
-def data_dir() -> Path:
-    """Absolute path to the repository ``data/`` directory (parent of src)."""
-    return Path(__file__).resolve().parent.parent.parent / "data"

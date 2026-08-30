@@ -17,9 +17,9 @@ jobs:
       - name: Install ruff
         run: pip install ruff
       - name: Ruff check
-        run: ruff check src downloader.py generate_test_data.py
+        run: ruff check src downloader.py scripts/generate_test_data.py
       - name: Ruff format check
-        run: ruff format --check src downloader.py generate_test_data.py
+        run: ruff format --check src downloader.py scripts/generate_test_data.py
 
   typecheck:
     name: Type check (mypy)

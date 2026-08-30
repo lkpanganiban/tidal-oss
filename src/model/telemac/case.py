@@ -26,6 +26,7 @@ from .hotspots import HotspotRegion
 from .mesh import (
     RefinementMesh,
     generate_mesh_from_grid,
+    generate_mesh_refined,
     load_supplied_mesh,
     save_manifest,
 )
@@ -64,6 +65,11 @@ def prepare_case(
     os.makedirs(case_dir, exist_ok=True)
 
     mesh_source = mesh_cfg.get("source", "generated")
+    # Strait-aware edges: the region clustering decides which box edges carry
+    # the tide (perpendicular to the channel axis); fall back to the config.
+    edge_types = getattr(region, "edge_types", None) or mesh_cfg.get(
+        "boundary", {}
+    ).get("edge_types")
     if mesh_source == "supplied":
         if supplied_mesh is None:
             raise ValueError(
@@ -77,17 +83,52 @@ def prepare_case(
             lat0=supplied_mesh.get("lat0", 0.0),
         )
     elif mesh_source == "generated":
-        if grid is None:
-            raise ValueError(
-                "a screening StructuredGrid is required to generate a mesh"
+        gebco_path = config.get("bathymetry", {}).get("path")
+        resolution_m = mesh_cfg.get("resolution_m")
+        depth_source = mesh_cfg.get("bathymetry_source", "parent")
+        if gebco_path and os.path.isfile(gebco_path) and resolution_m:
+            # Genuine refinement: sample bathymetry at mesh resolution so
+            # channel geometry missing from the coarse screening grid is
+            # resolved.  depth_source="parent" inherits the screening grid's
+            # own depths (reconciles with the parent); "gebco" samples
+            # native GEBCO (finer, but diverges from the parent).
+            mesh = generate_mesh_refined(
+                region.bbox,
+                os.path.join(case_dir, "mesh.slf"),
+                resolution_m=float(resolution_m),
+                gebco_path=gebco_path,
+                land_shapefile=config.get("bathymetry", {}).get("land_shapefile"),
+                edge_types=edge_types,
+                min_depth=config.get("bathymetry", {}).get("min_depth", 2.0),
+                max_depth=config.get("bathymetry", {}).get("max_depth", 6000.0),
+                parent_grid=grid if depth_source == "parent" else None,
+                depth_source=depth_source,
             )
-        mesh = generate_mesh_from_grid(
-            grid,
-            region.bbox,
-            os.path.join(case_dir, "mesh.slf"),
-            edge_types=mesh_cfg.get("boundary", {}).get("edge_types"),
-            land_shapefile=config.get("bathymetry", {}).get("land_shapefile"),
-        )
+        elif depth_source == "parent" and grid is not None:
+            # No GEBCO available but a parent grid exists — still reconcile.
+            mesh = generate_mesh_refined(
+                region.bbox,
+                os.path.join(case_dir, "mesh.slf"),
+                resolution_m=float(resolution_m or 500.0),
+                gebco_path=gebco_path or "",
+                edge_types=edge_types,
+                min_depth=config.get("bathymetry", {}).get("min_depth", 2.0),
+                max_depth=config.get("bathymetry", {}).get("max_depth", 6000.0),
+                parent_grid=grid,
+                depth_source="parent",
+            )
+        else:
+            if grid is None:
+                raise ValueError(
+                    "a screening StructuredGrid is required to generate a mesh"
+                )
+            mesh = generate_mesh_from_grid(
+                grid,
+                region.bbox,
+                os.path.join(case_dir, "mesh.slf"),
+                edge_types=edge_types,
+                land_shapefile=config.get("bathymetry", {}).get("land_shapefile"),
+            )
     else:
         raise ValueError(f"unknown telemac2d.mesh.source: {mesh_source}")
 
@@ -103,18 +144,53 @@ def prepare_case(
     )
     times, n_steps = compute_times(duration_days, time_step)
 
+    # One-way nesting: sample the parent screening solution (results.nc on the
+    # screening grid) at the liquid boundaries when available.  "auto" points
+    # at the screening output root; null forces the harmonic fallback.
+    parent_cfg = mesh_cfg.get("boundary", {}).get("parent_results_nc", "auto")
+    parent_nc = None
+    if parent_cfg and grid is not None:
+        if parent_cfg == "auto":
+            candidate = os.path.join(
+                config.get("output", {}).get("dir", "output/"),
+                config.get("output", {}).get("results_nc", "results.nc"),
+            )
+            parent_nc = candidate if os.path.isfile(candidate) else None
+        else:
+            parent_nc = parent_cfg
+    # Thompson nesting (parent u,v + eta): implemented behind a flag — v8p1r1
+    # routes prescribed-velocity boundaries through flowrate rescaling, so it
+    # needs a defensible flowrate series.  Elevation-only nesting is default.
+    thompson = bool(mesh_cfg.get("boundary", {}).get("thompson", False))
+
     boundaries = generate_boundaries(
         mesh,
         mesh_cfg,
         tidal,
         times,
         case_dir,
-        edge_types=mesh_cfg.get("boundary", {}).get("edge_types"),
+        edge_types=edge_types,
         liquid_nodes_file=mesh_cfg.get("boundary", {}).get("liquid_nodes_file"),
+        # The propagation ramp (harmonic fallback only) must run along the
+        # channel axis: NS regions force through-flow south->north, EW
+        # regions west->east.
+        propagation_axis="lat" if getattr(region, "axis", "EW") == "NS" else "lon",
+        parent_nc=parent_nc,
+        parent_grid=grid,
+        thompson=thompson,
     )
 
+    save_interval_hours = float(
+        config.get("output", {}).get("save_interval_hours", 1.0)
+    )
     build_steering(
-        case_dir, time_step, n_steps, telemac_cfg, title=f"TIDAL-OSS {region.id}"
+        case_dir,
+        time_step,
+        n_steps,
+        telemac_cfg,
+        title=f"TIDAL-OSS {region.id}",
+        save_interval_hours=save_interval_hours,
+        thompson=thompson,
     )
 
     manifest = {
@@ -134,6 +210,16 @@ def prepare_case(
         "n_liquid_points": len(boundaries.liquid_point_order),
         "n_liquid_boundaries": boundaries.n_segments,
         "nliq": boundaries.nliq,
+        "resolution_m": mesh_cfg.get("resolution_m"),
+        "axis": getattr(region, "axis", None),
+        "edge_types": edge_types,
+        "boundary_forcing": (
+            "parent-thompson"
+            if (parent_nc and thompson)
+            else "parent"
+            if parent_nc
+            else "harmonic"
+        ),
         "lon0": mesh.lon0,
         "lat0": mesh.lat0,
         "coordinates_are_meters": mesh.coordinates_are_meters,

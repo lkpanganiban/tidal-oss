@@ -203,25 +203,33 @@ def write_geometry(
     )
 
 
+def _read_mesh_arrays(f, header: dict, endian: str):
+    """Read the ikle / ipobo / node-x / node-y records shared by both file types.
+
+    Returns ``(ikle, ipobo, x, y)`` with ``ikle`` 0-based.  Result files stop
+    here (time records follow); geometry files additionally carry the geometry
+    variable records, which :func:`read_geometry` reads separately.
+    """
+    ndp = header["ndp"]
+    ikle = (
+        np.frombuffer(_read_record(f, endian), dtype=endian + "i4")
+        .reshape(-1, ndp)
+        .astype(np.int64)
+        - 1
+    )
+    ipobo = np.frombuffer(_read_record(f, endian), dtype=endian + "i4").astype(np.int64)
+    x = np.frombuffer(_read_record(f, endian), dtype=endian + "f4").astype(np.float64)
+    y = np.frombuffer(_read_record(f, endian), dtype=endian + "f4").astype(np.float64)
+    return ikle, ipobo, x, y
+
+
 def read_geometry(path: str) -> SerafinGeometry:
     """Parse a TELEMAC geometry/mesh file (binary or legacy ASCII)."""
     header = _read_serafin_header(path)
     endian = header["endian"]
     with open(path, "rb") as f:
         f.seek(header["data_offset"])
-        ikle_bytes = _read_record(f, endian)
-        ikle = (
-            np.frombuffer(ikle_bytes, dtype=endian + "i4")
-            .reshape(-1, header["ndp"])
-            .astype(np.int64)
-            - 1
-        )
-        ipobo_bytes = _read_record(f, endian)
-        ipobo = np.frombuffer(ipobo_bytes, dtype=endian + "i4").astype(np.int64)
-        x_bytes = _read_record(f, endian)
-        y_bytes = _read_record(f, endian)
-        x = np.frombuffer(x_bytes, dtype=endian + "f4").astype(np.float64)
-        y = np.frombuffer(y_bytes, dtype=endian + "f4").astype(np.float64)
+        ikle, ipobo, x, y = _read_mesh_arrays(f, header, endian)
         values = None
         if header["nvb1"] >= 1:
             var_bytes = _read_record(f, endian)
@@ -308,18 +316,7 @@ def read_serafin(path: str) -> dict:
 
     with open(path, "rb") as f:
         f.seek(header["data_offset"])
-        _ikle = _read_record(f, endian)
-        ikle = (
-            np.frombuffer(_ikle, dtype=endian + "i4")
-            .reshape(-1, header["ndp"])
-            .astype(np.int64)
-            - 1
-        )
-        _ipobo = _read_record(f, endian)
-        x_bytes = _read_record(f, endian)
-        y_bytes = _read_record(f, endian)
-        x = np.frombuffer(x_bytes, dtype=endian + "f4").astype(np.float64)
-        y = np.frombuffer(y_bytes, dtype=endian + "f4").astype(np.float64)
+        ikle, _ipobo, x, y = _read_mesh_arrays(f, header, endian)
 
         while True:
             try:

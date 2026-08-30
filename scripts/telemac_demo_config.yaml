@@ -77,7 +77,7 @@ telemac2d:
       # open edges and a node in the middle, which drains power out of the
       # interior.  Deliberately imposing a linear phase lag (phase_speed_mps)
       # makes the box hold roughly a half wavelength so the tide visibly
-      # travels through the domain (see docs/TELEMAC.md "Standing-wave caveat").
+      # travels through the domain (see docs/engines/TELEMAC.md "Standing-wave caveat").
       phase_speed_mps: 2.0
       propagation_axis: lon
       cluster_radius_km: 15.0

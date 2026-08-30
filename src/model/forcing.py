@@ -12,6 +12,8 @@ import dataclasses
 
 import numpy as np
 
+from .utils import find_coord
+
 ASTRO_FREQUENCIES: dict[str, float] = {
     "M2": 2.0 * np.pi / (12.4206012 * 3600.0),
     "S2": 2.0 * np.pi / (12.0 * 3600.0),
@@ -132,6 +134,27 @@ def _interp_to_boundary(
     return interp_amp(pts), interp_pha(pts)
 
 
+def _make_constituent(
+    name: str,
+    amp: np.ndarray,
+    phase_rad: np.ndarray,
+    lon_bnd: np.ndarray,
+    lat_bnd: np.ndarray,
+) -> TidalConstituent:
+    """Build a normalised TidalConstituent (upper-cased name, omega lookup)."""
+    omega = ASTRO_FREQUENCIES.get(name.upper())
+    if omega is None:
+        raise ValueError(f"Unknown constituent: {name}")
+    return TidalConstituent(
+        name=name.upper(),
+        amplitude=amp,
+        phase=phase_rad,
+        omega=omega,
+        lon=lon_bnd.copy(),
+        lat=lat_bnd.copy(),
+    )
+
+
 def read_fes_constituents(
     path: str,
     constituents: list[str],
@@ -186,20 +209,7 @@ def read_fes_constituents(
         )
         pha = np.deg2rad(pha_deg)
 
-        omega = ASTRO_FREQUENCIES.get(name)
-        if omega is None:
-            raise ValueError(f"Unknown constituent: {name}")
-
-        result.append(
-            TidalConstituent(
-                name=name,
-                amplitude=amp,
-                phase=pha,
-                omega=omega,
-                lon=lon_bnd.copy(),
-                lat=lat_bnd.copy(),
-            )
-        )
+        result.append(_make_constituent(name, amp, pha, lon_bnd, lat_bnd))
 
         ds_amp.close()
         ds_pha.close()
@@ -294,20 +304,7 @@ def read_got_constituents(
         )
         pha = np.deg2rad(pha_deg)
 
-        omega = ASTRO_FREQUENCIES.get(name.upper())
-        if omega is None:
-            raise ValueError(f"Unknown constituent: {name}")
-
-        result.append(
-            TidalConstituent(
-                name=name.upper(),
-                amplitude=amp,
-                phase=pha,
-                omega=omega,
-                lon=lon_bnd.copy(),
-                lat=lat_bnd.copy(),
-            )
-        )
+        result.append(_make_constituent(name, amp, pha, lon_bnd, lat_bnd))
 
         ds.close()
 
@@ -350,8 +347,8 @@ def read_tpxo_constituents(
 
     ds = xr.open_dataset(path, decode_times=False)
 
-    lon_var = _find_coord(ds, ["lon", "lon_z", "longitude", "x"])
-    lat_var = _find_coord(ds, ["lat", "lat_z", "latitude", "y"])
+    lon_var = find_coord(ds, ["lon", "lon_z", "longitude", "x"])
+    lat_var = find_coord(ds, ["lat", "lat_z", "latitude", "y"])
     con_var = _find_any(ds, ["con", "constituent", "constituents"])
     if con_var is None:
         raise KeyError(
@@ -398,13 +395,6 @@ def read_tpxo_constituents(
 
     ds.close()
     return result
-
-
-def _find_coord(ds, candidates: list[str]) -> str:
-    for name in candidates:
-        if name in ds.coords or name in ds.dims:
-            return name
-    raise KeyError(f"No coordinate found among {candidates} in TPXO dataset.")
 
 
 def _find_any(ds, candidates: list[str]) -> str | None:

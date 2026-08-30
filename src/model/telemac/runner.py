@@ -52,7 +52,6 @@ def build_command(
 
 def run_case(
     case_dir: str,
-    config: dict | None = None,
     *,
     docker: bool = True,
     dry_run: bool = False,

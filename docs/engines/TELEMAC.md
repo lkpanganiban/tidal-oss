@@ -138,8 +138,11 @@ All TELEMAC settings live under the `telemac2d:` section of
 | `steering.friction_law` / `friction_coefficient` | Bottom friction (tune to match `cd`) |
 | `postprocess.output_grid_resolution_km` | Raster spacing for canonical outputs |
 
-See `docs/CASE_AUTHORING.md` for mesh/boundary details and
-`docs/POSTPROCESSING.md` for the output mapping.
+See `CASE_AUTHORING.md` for mesh/boundary details and
+`POSTPROCESSING.md` for the output mapping.  For how the refinement is
+kept consistent with the Python screening (nesting, friction harmonisation,
+acceptance criteria, `reconciliation.json`), see
+`RECONCILIATION.md`.
 
 ## Standing-wave caveat (why a sub-domain can show "a line of points")
 
@@ -167,31 +170,34 @@ boundaries genuinely out of phase.  Two approaches:
 2. **Orient the box along the strait axis** and open the boundaries where the
    tide truly enters/exits, leaving the coast as solid walls.
 
-The generated mesh is triangulated from the *screening* structured grid, so
-its resolution matches the screening cell size (`model.domain.resolution_km`)
-rather than `mesh.resolution_m`.  For genuinely finer refinements, supply a
-custom mesh (see `docs/CASE_AUTHORING.md`).
+Generated meshes are built by `generate_mesh_refined`, which samples
+bathymetry directly at `telemac2d.mesh.resolution_m` (default 500 m) rather
+than triangulating the coarse screening grid.  `telemac2d.mesh.bathymetry_source`
+chooses between `parent` (inherit the screening grid's depths and wet mask, so
+the refinement reconciles with the national view — the default) and `gebco`
+(native GEBCO sampling, physically finer but diverges from the parent).
+See `RECONCILIATION.md` for the full nesting/reconciliation strategy.
 
-### Liquid-boundary phase is applied per segment
+### Liquid-boundary phase is applied per point
 
-TELEMAC reads the `.liq` file with **one column per liquid boundary segment**
-(up to `NUMLIQ` columns), not one column per liquid *node*.  The adapter
-therefore writes one `.liq` column per contiguous liquid segment (e.g. the
-north edge and the south edge of a box are two segments) and applies each
-segment's phase offset to *all* of its nodes:
+TELEMAC reads the `.liq` file with **one column per liquid boundary** (up to
+`NUMLIQ` columns), not one column per liquid *node*; the value in each column
+is applied uniformly along that boundary.  The adapter therefore writes **one
+column per liquid node** (each node is its own one-point boundary) so every
+node gets its own GOT/parent elevation and phase:
 
-- The phase offset for a segment is `Δt = ω · s / c` where `s` is the arc
-  length of the segment's centre from the reference end along the
-  `propagation_axis` and `c = phase_speed_mps`.
-- Without this, every liquid node would share the same single column, so two
-  opposing liquid boundaries would be forced in phase → a standing wave → the
-  "line of points" artifact.  Per-segment columns make the boundaries
-  genuinely out of phase, producing through-flow.
+- The phase offset for a node is `Δt = ω · s / c` where `s` is the distance of
+  the node from the reference end along the `propagation_axis` and
+  `c = phase_speed_mps`.
+- Without per-point columns, contiguous IPOBO grouping can pair opposite box
+  edges at the same latitude into one segment and force them identically → a
+  standing wave → the "line of points" artifact.  Per-point columns keep the
+  boundaries genuinely out of phase, producing through-flow.
 
-For a land-aware mesh the liquid segments are discovered automatically from
-the wet/dry coastline: open (non-coastal) edges become `liquid`, coastal
-edges become `solid` walls.  The mesh stores `liquid_ipobo` so the boundary
-writer can group liquid nodes into segments.
+For a land-aware mesh the liquid points are discovered automatically from the
+wet/dry coastline: open (non-coastal) edges become `liquid`, coastal edges
+become `solid` walls.  The mesh stores `liquid_ipobo` so the boundary writer
+can list the liquid nodes directly.
 
 ### Strait-aligned demonstration
 

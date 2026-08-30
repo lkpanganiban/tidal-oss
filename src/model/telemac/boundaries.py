@@ -25,6 +25,7 @@ from .mesh import RefinementMesh
 LIQUID_ELEVATION = 5
 SOLID_WALL = 2
 FREE = 4
+VELOCITY_PRESCRIBED = 5  # LIUBOR/LIVBOR = 5: velocity imposed from the .liq file
 
 TOL_DEG = 1.0e-6
 
@@ -89,6 +90,7 @@ def write_cli(
     is_liquid: list[bool],
     path: str,
     segments: list[list[int]] | None = None,
+    velocity_prescribed: bool = False,
 ) -> None:
     """Write the TELEMAC ``.cli`` boundary-conditions file.
 
@@ -102,6 +104,9 @@ def write_cli(
     liquid (prescribed-elevation) point and the 8th column (``NUMLIQ``) is the
     1-based index of the liquid boundary segment that point belongs to -- it
     must match a column of the ``.liq`` file.  ``LIEBOR=2`` marks a solid wall.
+
+    With ``velocity_prescribed`` (Thompson nesting) liquid points also carry
+    ``LIUBOR=LIVBOR=5`` so TELEMAC reads ``U(i)``/``V(i)`` velocity columns.
     """
     geom = mesh.geometry
     ipobo = geom.ipobo
@@ -118,7 +123,11 @@ def write_cli(
     for k in range(1, nbnd + 1):
         node = int(np.where(ipobo == k)[0][0]) + 1  # 1-based global node
         if is_liquid[k - 1]:
-            liebor, liubor, livbor = LIQUID_ELEVATION, FREE, FREE
+            liebor = LIQUID_ELEVATION
+            if velocity_prescribed:
+                liubor = livbor = VELOCITY_PRESCRIBED
+            else:
+                liubor = livbor = FREE
             # Column 8 is the liquid-boundary number, NOT a "type".
             litbor = seg_of_k.get(k, 1)
         else:
@@ -140,18 +149,21 @@ def write_cli(
 
 
 def write_liq(
-    times: np.ndarray, liquid_series: np.ndarray, path: str, nliq: int | None = None
+    times: np.ndarray,
+    liquid_series: np.ndarray,
+    path: str,
+    nliq: int | None = None,
+    uv_series: tuple[np.ndarray, np.ndarray] | None = None,
 ) -> None:
     """Write the TELEMAC ``.liq`` liquid-boundary time series.
 
-    TELEMAC v7/v8 reads this file with ``READ_FIC_FRLIQ`` and expects one column
-    per **liquid boundary** (``SL(1)`` for boundary 1, ``SL(2)`` for boundary 2,
-    ...).  ``NUMLIQ`` is determined by the boundary-conditions file, and TELEMAC
-    reads exactly that many ``SL(i)`` columns; any extra columns are ignored.
-    Each column is the (uniform-along-the-boundary) prescribed elevation time
-    series for one liquid boundary segment.
+    TELEMAC v7/v8 reads this file with ``READ_FIC_FRLIQ``, matching columns
+    by name.  With ``uv_series`` (Thompson nesting) the file additionally
+    carries ``U(i)``/``V(i)`` east/north velocity columns per boundary, and
+    the reader returns them to the characteristic boundary treatment.
 
-    ``liquid_series`` has shape ``(nt, nliq)`` — one column per liquid boundary.
+    ``liquid_series`` has shape ``(nt, nliq)``; ``uv_series`` is a pair of
+    ``(nt, nliq)`` arrays.
     """
     times = np.asarray(times, dtype=np.float64)
     liquid_series = np.asarray(liquid_series, dtype=np.float64)
@@ -161,17 +173,34 @@ def write_liq(
     nt, ncols = liquid_series.shape
     if nliq is None:
         nliq = ncols
+    if uv_series is not None:
+        u_s = np.atleast_2d(np.asarray(uv_series[0], dtype=np.float64))
+        v_s = np.atleast_2d(np.asarray(uv_series[1], dtype=np.float64))
+        if u_s.shape[1] == 1 and nliq > 1:
+            u_s = np.repeat(u_s, nliq, axis=1)
+            v_s = np.repeat(v_s, nliq, axis=1)
 
     header = ["T"] + [f"SL({i})" for i in range(1, nliq + 1)]
+    units = ["s"] + ["m"] * nliq
+    if uv_series is not None:
+        header += [f"U({i})" for i in range(1, nliq + 1)]
+        header += [f"V({i})" for i in range(1, nliq + 1)]
+        units += ["m/s"] * (2 * nliq)
     with open(path, "w") as f:
-        # FRLIQ format: the first line must begin with ``T`` (the time keyword)
-        # followed by the ``SL(i)`` variable names, then one data record per
-        # time step: ``<time> SL(1) SL(2) ...``.  No title or units line --
-        # TELEMAC reads the leading ``T`` as the header marker.
+        # FRLIQ layout expected by TELEMAC v8p1r1 (read_fic_frliq.f): the
+        # first line is the variable list and MUST begin with ``T`` (the time
+        # keyword); the second line is skipped by the reader (units are
+        # conventional); data records follow.  Dropping the units line makes
+        # the reader swallow the first data record, so early simulation
+        # times read as "out of range".
         f.write(" ".join(header) + "\n")
+        f.write(" ".join(units) + "\n")
         for t_idx in range(nt):
             parts = [f"{times[t_idx]:.3f}"]
             parts.extend(f"{val:.6e}" for val in liquid_series[t_idx, :nliq])
+            if uv_series is not None:
+                parts.extend(f"{val:.6e}" for val in u_s[t_idx, :nliq])
+                parts.extend(f"{val:.6e}" for val in v_s[t_idx, :nliq])
             f.write(" ".join(parts) + "\n")
 
 
@@ -181,6 +210,7 @@ def _phase_lag_seconds(
     ref_lon: float,
     ref_lat: float,
     config: dict,
+    axis: str | None = None,
 ) -> float:
     """Phase lag [s] to impose a propagating tide at ``(rep_lon, rep_lat)``.
 
@@ -206,7 +236,7 @@ def _phase_lag_seconds(
     phase_speed = boundary_cfg.get("phase_speed_mps")
     if not phase_speed:
         return 0.0
-    axis = boundary_cfg.get("propagation_axis", "lon")
+    axis = axis or boundary_cfg.get("propagation_axis", "lon")
     if axis == "lon":
         metres_per_deg = 111320.0 * math.cos(math.radians(rep_lat))
         dist = (rep_lon - ref_lon) * metres_per_deg
@@ -214,6 +244,61 @@ def _phase_lag_seconds(
         metres_per_deg = 110540.0
         dist = (rep_lat - ref_lat) * metres_per_deg
     return float(dist) / float(phase_speed)
+
+
+def _harmonic_series(
+    lons: np.ndarray,
+    lats: np.ndarray,
+    tidal: dict,
+    const_names: list[str],
+    source: str,
+    ref_lon: float,
+    ref_lat: float,
+    config: dict,
+    propagation_axis: str | None,
+    liq_times: np.ndarray,
+) -> np.ndarray:
+    """Harmonic (GOT/synthetic) elevation series at the given points.
+
+    This is the fallback forcing used when no parent screening solution is
+    available; the artificial propagation ramp applies only here.
+    """
+    from model.forcing import build_tidal_boundary, read_tidal_constituents
+
+    cols: list[np.ndarray] = []
+    for rep_lon, rep_lat in zip(lons, lats, strict=True):
+        if source == "synthetic":
+            from model.forcing import make_synthetic_tidal_boundary
+
+            bnd = make_synthetic_tidal_boundary(
+                1,
+                amplitude=tidal.get("amplitude", 0.5),
+                constituents=const_names,
+            )
+        else:
+            tidal_path = tidal.get("path")
+            if not tidal_path:
+                raise ValueError(
+                    "tidal_forcing.path is required for non-synthetic runs"
+                )
+            consts = read_tidal_constituents(
+                source, tidal_path, const_names, [float(rep_lon)], [float(rep_lat)]
+            )
+            bnd = build_tidal_boundary(consts)
+        lag = _phase_lag_seconds(
+            float(rep_lon),
+            float(rep_lat),
+            ref_lon,
+            ref_lat,
+            config,
+            axis=propagation_axis,
+        )
+        omega = np.asarray(bnd.omega)
+        # Retard the phase by omega * lag so the tide travels across the box.
+        bnd.phase = bnd.phase - np.outer(omega, np.array([lag], dtype=np.float64))
+        eta = bnd.evaluate(liq_times)
+        cols.append(eta if eta.ndim == 1 else eta[:, 0])
+    return np.column_stack(cols)
 
 
 def generate_boundaries(
@@ -225,6 +310,10 @@ def generate_boundaries(
     *,
     edge_types: dict[str, str] | None = None,
     liquid_nodes_file: str | None = None,
+    propagation_axis: str | None = None,
+    parent_nc: str | None = None,
+    parent_grid=None,
+    thompson: bool = False,
 ) -> BoundarySet:
     """Create ``.cli`` and ``.liq`` for a refinement mesh.
 
@@ -232,13 +321,19 @@ def generate_boundaries(
     prescribes a *uniform* elevation per boundary, and grouping opposite sides
     of the box into one segment (which contiguous IPOBO grouping does when the
     boundary ordering interleaves the edges) would force them *identically*
-    and forbid any east--west gradient.  Per-point nesting gives each point
-    the GOT tide at its exact location plus the propagation ramp from
-    :func:`_phase_lag_seconds`, which is what drives through-flow instead of
-    a uniform rise-and-fall.
-    """
-    from model.forcing import build_tidal_boundary, read_tidal_constituents
+    and forbid any east--west gradient.
 
+    Forcing source, in order of preference:
+
+    1. **Parent nesting** — when ``parent_nc`` (the screening ``results.nc``)
+       and ``parent_grid`` are given, each liquid point receives the parent
+       screening model's own elevation, sampled wet-cell-aware at the point.
+       This is a true one-way nested child: same constituents, epoch, datum,
+       and the parent's spatial amplitude/phase variation.
+    2. **Harmonic fallback** — GOT constituents evaluated per point, plus the
+       propagation ramp from :func:`_phase_lag_seconds` (used only when no
+       parent solution exists).
+    """
     if edge_types is None:
         edge_types = config.get("boundary", {}).get(
             "edge_types",
@@ -265,9 +360,26 @@ def generate_boundaries(
     segments = [[k] for k in liquid_point_order]
     n_segments = len(segments)
 
+    # The .liq file is written at ~hourly cadence (TELEMAC interpolates the
+    # liquid-boundary records in time).  Prescribing every solver step on a
+    # fine mesh would produce a needlessly huge file with no extra signal —
+    # the tidal constituents are smooth at hourly sampling, matching the
+    # screening model's forcing cadence.
+    dt = float(times[1] - times[0]) if len(times) > 1 else 1.0
+    liq_stride = max(1, int(round(3600.0 / max(dt, 1e-6))))
+    liq_times = times[::liq_stride]
+
+    # Thompson nesting (parent u,v + eta with characteristic treatment).
+    # NOTE: v8p1r1 routes LIUBOR=5 boundaries through DEBIMP flowrate
+    # rescaling (PRESCRIBED FLOWRATES required); enable only with a
+    # defensible flowrate series.  Elevation-only nesting is the default.
+    thompson = thompson and parent_nc is not None and parent_grid is not None
+
     cli_path = f"{cas_dir}/mesh.cli"
     liq_path = f"{cas_dir}/mesh.liq"
-    write_cli(mesh, is_liquid, cli_path, segments=segments)
+    write_cli(
+        mesh, is_liquid, cli_path, segments=segments, velocity_prescribed=thompson
+    )
 
     if segments:
         # Representative (mean) location of each liquid-boundary segment, plus the
@@ -284,39 +396,99 @@ def generate_boundaries(
 
         const_names = tidal.get("constituents", ["M2", "S2", "K1", "O1"])
         source = tidal.get("source", "synthetic")
+        uv_series = None  # Thompson velocity series; present only under parent nesting
 
-        seg_eta: list[np.ndarray] = []
-        for s_idx in range(n_segments):
-            rep_lon, rep_lat = seg_lon[s_idx], seg_lat[s_idx]
-            if source == "synthetic":
-                from model.forcing import make_synthetic_tidal_boundary
+        # --- preferred: one-way nesting in the parent screening solution ---
+        if parent_nc and parent_grid is not None:
+            from .parent import (
+                read_parent_time_coverage,
+                sample_parent_elevation,
+                sample_parent_velocity,
+            )
 
-                bnd = make_synthetic_tidal_boundary(
-                    1,
-                    amplitude=tidal.get("amplitude", 0.5),
-                    constituents=const_names,
+            p_lon = np.array(
+                [mesh.node_lon[n] for n in liquid_node_global], dtype=np.float64
+            )
+            p_lat = np.array(
+                [mesh.node_lat[n] for n in liquid_node_global], dtype=np.float64
+            )
+            p_times, p_series, resolved = sample_parent_elevation(
+                parent_nc, parent_grid, p_lon, p_lat
+            )
+            if thompson:
+                _, p_u, p_v = sample_parent_velocity(
+                    parent_nc, parent_grid, p_lon, p_lat
                 )
-            else:
-                tidal_path = tidal.get("path")
-                if not tidal_path:
-                    raise ValueError(
-                        "tidal_forcing.path is required for non-synthetic runs"
+                uv_series = (p_u, p_v)
+            # TELEMAC must never ask for a time past the parent's last record.
+            t_first, t_last = read_parent_time_coverage(parent_nc)
+            if float(times[-1]) > t_last + 1.0:
+                raise ValueError(
+                    f"refinement duration ({times[-1] / 86400:.1f} d) exceeds the "
+                    f"parent solution ({t_last / 86400:.1f} d); align "
+                    "simulation.duration_days with the screening run"
+                )
+            if not resolved.all():
+                # Harmonic fallback for the (rare) points without a wet parent
+                # cell nearby; parent series everywhere else.
+                fb_idx = [i for i, ok in enumerate(resolved) if not ok]
+                fb = _harmonic_series(
+                    p_lon[fb_idx],
+                    p_lat[fb_idx],
+                    tidal,
+                    const_names,
+                    source,
+                    ref_lon,
+                    ref_lat,
+                    config,
+                    propagation_axis,
+                    liq_times,
+                )
+                for col, i in enumerate(fb_idx):
+                    p_series[:, i] = fb[:, col]
+                if thompson:
+                    # No parent flow state for these points — leave their
+                    # velocity columns at rest.
+                    for i in fb_idx:
+                        uv_series[0][:, i] = 0.0
+                        uv_series[1][:, i] = 0.0
+            if p_times[0] > 0.0:
+                # The parent's first snapshot is a few seconds in; prepend a
+                # t=0 record so TELEMAC's first boundary query is in range.
+                p_times = np.concatenate([[0.0], p_times])
+                p_series = np.vstack([p_series[:1], p_series])
+                if uv_series is not None:
+                    uv_series = (
+                        np.vstack([uv_series[0][:1], uv_series[0]]),
+                        np.vstack([uv_series[1][:1], uv_series[1]]),
                     )
-                consts = read_tidal_constituents(
-                    source, tidal_path, const_names, [rep_lon], [rep_lat]
-                )
-                bnd = build_tidal_boundary(consts)
-            lag = _phase_lag_seconds(rep_lon, rep_lat, ref_lon, ref_lat, config)
-            omega = np.asarray(bnd.omega)
-            # Retard the phase by omega * lag so the tide travels across the box.
-            bnd.phase = bnd.phase - np.outer(omega, np.array([lag], dtype=np.float64))
-            eta = bnd.evaluate(times)
-            seg_eta.append(eta if eta.ndim == 1 else eta[:, 0])
-        liquid_series = np.column_stack(seg_eta)  # (nt, n_segments)
-        write_liq(times, liquid_series, liq_path, nliq=n_segments)
+            liquid_series = p_series
+            liq_file_times = p_times
+        else:
+            liquid_series = _harmonic_series(
+                np.array(seg_lon),
+                np.array(seg_lat),
+                tidal,
+                const_names,
+                source,
+                ref_lon,
+                ref_lat,
+                config,
+                propagation_axis,
+                liq_times,
+            )
+            liq_file_times = liq_times
+
+        write_liq(
+            liq_file_times,
+            liquid_series,
+            liq_path,
+            nliq=n_segments,
+            uv_series=uv_series,
+        )
         nliq = n_segments
     else:
-        write_liq(times, np.zeros((len(times), 0)), liq_path, nliq=0)
+        write_liq(liq_times, np.zeros((len(liq_times), 0)), liq_path, nliq=0)
         nliq = 0
 
     return BoundarySet(

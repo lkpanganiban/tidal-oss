@@ -58,6 +58,8 @@ def build_steering(
     *,
     title: str = "TIDAL-OSS TELEMAC REFINEMENT",
     variables: list[str] | None = None,
+    save_interval_hours: float = 1.0,
+    thompson: bool = False,
 ) -> str:
     """Write ``case.cas`` and return its path."""
     cas = Path(cas_dir)
@@ -70,6 +72,11 @@ def build_steering(
     res_file = "r2d.slf"
     var_list = variables or steering_cfg.get("variables", DEFAULT_VARIABLES)
 
+    # Write snapshots at the same cadence as the Python screening
+    # (output.save_interval_hours) instead of every solver step — this keeps
+    # r2d.slf small and the two engines' time series directly comparable.
+    print_period = max(1, int(round(save_interval_hours * 3600.0 / time_step)))
+
     base = {
         "TITLE": f"'{title}'",
         "GEOMETRY FILE": geom_file,
@@ -78,9 +85,16 @@ def build_steering(
         "RESULTS FILE": res_file,
         "TIME STEP": _fmt_scalar(time_step),
         "NUMBER OF TIME STEPS": _fmt_scalar(int(n_steps)),
+        "GRAPHIC PRINTOUT PERIOD": _fmt_scalar(print_period),
         "INITIAL TIME SET TO ZERO": "YES",
         "VARIABLES FOR GRAPHIC PRINTOUTS": f"'{_v8_variables(var_list)}'",
     }
+
+    # Thompson characteristic treatment (FRTYPE=2) uses the parent's eta AND
+    # velocity at every liquid point — elevation-only nesting under-drives
+    # the child.
+    if thompson:
+        base["OPTION FOR LIQUID BOUNDARIES"] = "2"
 
     if template:
         txt = Path(template).read_text()
@@ -103,6 +117,10 @@ def build_steering(
     for key, val in base.items():
         lines.append(f"{key} : {val}")
 
+    # NOTE: in TELEMAC v8p1r1 law 2 = CHEZY (cf = g/C^2).  A Chezy
+    # coefficient of sqrt(g/cd) reproduces the screening model's constant
+    # quadratic drag cd (default 0.0025 -> C ~ 62.6), keeping the two
+    # engines' bottom friction consistent.
     friction_law = steering_cfg.get("friction_law", 2)
     lines.append(f"LAW OF BOTTOM FRICTION : {_fmt_scalar(friction_law)}")
     if steering_cfg.get("linear_friction_coefficient") is not None:

@@ -3,7 +3,8 @@
 This sub-package turns the fast Python screening model into a two-stage
 pipeline: screen the whole archipelago, cluster the hotspots, and refine the
 most energetic regions with the finite-element TELEMAC-2D solver running inside
-a public Docker image.  See ``docs/TELEMAC.md`` and ``docs/WORKFLOW.md``.
+a public Docker image.  See ``docs/engines/TELEMAC.md`` and
+``docs/architecture/WORKFLOW.md``.
 """
 
 from __future__ import annotations

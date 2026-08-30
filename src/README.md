@@ -37,50 +37,37 @@ The model can run on synthetic data, but for realistic simulations you need:
 
 | Dataset | Size | Auto-download? | Required for |
 |---|---|---|---|
-| GEBCO 2024 bathymetry | ~2.7 GB | No (licence) | Real bathymetry |
-| OSM Philippines shoreline | ~25 MB | Yes | Land mask |
-| GADM Philippines boundary | ~15 MB | Yes | Land mask |
-| GOT4.10c (NASA) | ~44 MB | Yes (no registration!) | Real tidal forcing (recommended) |
-| FES2014 tidal harmonics | ~2 GB | No (AVISO) | Real tidal forcing |
-| TPXO9-atlas tidal harmonics | ~4.1 GB | No (TPXO) | Alternative real forcing |
+| GEBCO 2026 bathymetry (PH subset) | ~64 MB | Yes (COG range requests) | Real bathymetry |
+| Philippines landmass (GeoBoundaries ADM0) | ~2.5 MB | Yes | Land mask |
+| GOT4.10c (NASA GSFC) | ~44 MB | Yes (no registration!) | Real tidal forcing (recommended) |
+| FES2014 tidal harmonics | ~2 GB | No (AVISO registration) | Real tidal forcing |
+| TPXO9-atlas tidal harmonics | ~4.1 GB | No (TPXO registration) | Alternative real forcing |
 
 ### Using the downloader
 
 ```bash
 python downloader.py                  # guided interactive mode (y/N prompts)
-python downloader.py --all            # auto-download OSM + GADM + GOT4.10c; show manual steps for the rest
-python downloader.py --shoreline      # OSM + GADM only
-python downloader.py --tidal          # show manual download instructions for FES2014, TPXO9, and GOT4.10c
-python downloader.py --gebco          # show GEBCO manual instructions
+python downloader.py --all            # auto-download GEBCO + landmask + GOT4.10c; show manual steps for the rest
+python downloader.py --gebco          # GEBCO 2026 subset only
+python downloader.py --landmask       # Philippines landmass only
+python downloader.py --tidal          # GOT4.10c + manual instructions for FES2014, TPXO9
 python downloader.py --data-dir ./downloaded_data     # custom output directory
 ```
 
-Automatically downloaded zips (OSM, GADM) are extracted in-place. The GOT4.10c archive (`got4.10c.tar.gz`) is downloaded but **not** auto-extracted — you must extract it manually:
+- **GEBCO** is read from a cloud-optimised GeoTIFF mirror on `data.source.coop`
+  via rasterio range requests, so only the ~17 MB Philippines window is
+  transferred (not the 7.4 GB global grid) and written as a GEBCO-format
+  NetCDF at `data/gebco/gebco_2026_n22.0_s4.0_w112.0_e128.0.nc`.
+- **Landmask** is the GeoBoundaries Philippines ADM0 GeoJSON
+  (`data/philippines_landmass.geojson`).
+- **GOT4.10c** archive is downloaded and auto-extracted to `data/GOT4.10c/`.
 
-```bash
-tar xzf data/got4.10c.tar.gz -C data/
-```
-
-Already-present files are skipped unless `--force` is passed.
-
-After downloading, update `src/model/config.yaml` to point at your data:
-
-```yaml
-bathymetry:
-  path: data/gebco_bathymetry/GEBCO_2024.nc      # ← set this
-  land_shapefile: data/gadm41_PHL_shp/gadm41_PHL_0.shp  # or null
-
-tidal_forcing:
-  source: got                                      # synthetic | got | fes2014 | tpxo9
-  path: data/GOT4.10c/grids_oceantide_netcdf/     # dir for GOT/FES, file for TPXO
-
-output:
-  dir: output/
-```
+Already-present files are skipped unless `--force` is passed. The paths in
+`src/model/config.yaml` already point at these locations.
 
 ### Manual downloads
 
-- **GEBCO 2024:** https://www.gebco.net/data_and_products/gridded_bathymetry_data/gebco_2024/
+- **GEBCO 2026 (official global NetCDF, 7.4 GB):** https://dap.ceda.ac.uk/bodc/gebco/global/gebco_2026/
 - **GOT4.10c:** https://earth.gsfc.nasa.gov/geo/data/ocean-tide-models (free, no registration)
 - **FES2014:** https://www.aviso.altimetry.fr/en/data/products/auxiliary-products/global-tide-fes.html
 - **TPXO9-atlas:** https://www.tpxo.net/global/tpxo9-atlas
@@ -92,41 +79,27 @@ For manually downloaded archives, extract them with:
 ```bash
 # GOT4.10c tar.gz
 tar xzf data/got4.10c.tar.gz -C data/
-
-# OSM shapefile zip
-unzip data/philippines-latest-free.shp.zip -d data/philippines-latest-free.shp/
-
-# GADM boundary zip
-unzip data/gadm41_PHL_shp.zip -d data/gadm41_PHL_shp/
 ```
 
 Expected directory layout:
 
 ```
 data/
-├── gebco_bathymetry/
-│   └── GEBCO_2024.nc
-├── fes2014/
+├── gebco/
+│   └── gebco_2026_n22.0_s4.0_w112.0_e128.0.nc
+├── philippines_landmass.geojson
+├── fes2014/                      # manual
 │   ├── M2_ocean.nc
-│   ├── M2_load.nc
-│   ├── S2_ocean.nc
-│   ├── S2_load.nc
-│   ├── K1_ocean.nc
-│   ├── K1_load.nc
-│   ├── O1_ocean.nc
-│   └── O1_load.nc
-├── tpxo9/
+│   └── ...
+├── tpxo9/                        # manual
 │   └── h_tpxo9.v1.nc
-├── GOT4.10c/
-│   └── grids_oceantide_netcdf/
-│       ├── m2.nc
-│       ├── s2.nc
-│       ├── k1.nc
-│       ├── o1.nc
-│       └── ...
-├── philippines-latest-free.shp/       # extracted OSM shapefiles
-└── gadm41_PHL_shp/
-    └── gadm41_PHL_0.shp               # land-polygon boundary
+└── GOT4.10c/
+    └── grids_oceantide_netcdf/
+        ├── m2.nc
+        ├── s2.nc
+        ├── k1.nc
+        ├── o1.nc
+        └── ...
 ```
 
 ---
@@ -161,7 +134,7 @@ Or point to a custom config:
 python -m src.model.run --config src/model/config.yaml
 ```
 
-To use real GEBCO bathymetry, set `bathymetry.path` in config.yaml to a local GEBCO NetCDF file. The model derives a land mask from the GADM Philippines shapefile (`land_shapefile` key). Set `land_shapefile: null` to use GEBCO elevation > 0 as a fallback. Without bathymetry, the model runs on a synthetic rectangular test grid.
+To use real GEBCO bathymetry, set `bathymetry.path` in config.yaml to a local GEBCO NetCDF file. The model derives a land mask from the Philippines landmass GeoJSON (`land_shapefile` key). Set `land_shapefile: null` to use GEBCO elevation > 0 as a fallback. Without bathymetry, the model runs on a synthetic rectangular test grid.
 
 ### Option B: Docker
 
@@ -231,7 +204,7 @@ python -m model.telemac postprocess --case-dir cases/region-001 \
 ```
 
 Refinement outputs land in `output/telemac/<region>/` and are served by the web
-app exactly like the screening outputs. See `docs/TELEMAC.md` and the linked
+app exactly like the screening outputs. See `docs/engines/TELEMAC.md` and the linked
 pages for mesh, boundary, and post-processing details.
 
 ## Step 2 — Run the web service

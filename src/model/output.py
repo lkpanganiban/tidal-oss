@@ -115,18 +115,6 @@ class NetCDFStreamWriter:
             self._nc["power_density"][i, :, :] = power
         self._idx += 1
 
-    def last_state(self) -> tuple[float, np.ndarray, np.ndarray, np.ndarray]:
-        """Return (t, eta, u, v) of the most recent snapshot (for resume)."""
-        if self._idx == 0:
-            raise ValueError("No snapshots written yet")
-        i = self._idx - 1
-        return (
-            float(self._nc["time"][i]),
-            np.asarray(self._nc["eta"][i, :, :]),
-            np.asarray(self._nc["u"][i, :, :]),
-            np.asarray(self._nc["v"][i, :, :]),
-        )
-
     def close(self):
         if self._nc is not None:
             self._nc.close()

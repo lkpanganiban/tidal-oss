@@ -77,13 +77,30 @@ density $P = \frac12 \rho |U|^3$ in W/m².
 .
 ├── README.md                    # quick start, config table, troubleshooting
 ├── docker-compose.yml           # Flask + MapLibre web service
-├── downloader.py                # fetch GOT4.10c, OSM, GADM datasets
-├── generate_test_data.py        # synthetic data generator
+├── downloader.py                # fetch GEBCO subset, landmass, GOT4.10c
+├── scripts/
+│   └── generate_test_data.py    # synthetic data generator
 ├── docs/
 │   ├── AGENTS.md                # ← this file
-│   ├── EXPLAINER.ipynb          # 2-hour workshop notebook (runnable)
-│   ├── MODEL.md                 # full physics & methodology reference
-│   └── workflow.drawio          # visual pipeline diagram
+│   ├── README.md                # documentation index
+│   ├── plan.md                  # implementation plan & milestones
+│   ├── concepts/
+│   │   └── MODEL.md             # full physics & methodology reference
+│   ├── architecture/
+│   │   ├── ARCHITECTURE.md      # integrated technical guide
+│   │   ├── WORKFLOW.md          # screening → TELEMAC workflow
+│   │   └── workflow.drawio      # visual pipeline diagram
+│   ├── engines/
+│   │   ├── TELEMAC.md           # TELEMAC-2D refinement backend
+│   │   ├── CASE_AUTHORING.md    # mesh / boundary / steering conventions
+│   │   ├── POSTPROCESSING.md    # Selafin → canonical outputs
+│   │   └── RECONCILIATION.md    # parent/refinement consistency
+│   ├── operations/
+│   │   ├── TROUBLESHOOTING.md   # symptoms & fixes
+│   │   └── SCREENSHOTS.md       # executed end-to-end walkthrough
+│   └── notebooks/
+│       ├── EXPLAINER.ipynb      # 2-hour workshop notebook (runnable)
+│       └── workshop.ipynb       # generated slide-deck notebook
 ├── src/
 │   ├── requirements.txt         # Python dependencies (all components)
 │   ├── README.md                # step-by-step guide
@@ -119,10 +136,11 @@ density $P = \frac12 \rho |U|^3$ in W/m².
 ├── LICENSE                      # MIT licence
 ├── .github/workflows/ci.yml     # lint + type-check + test CI
 ├── data/                        # external datasets (gitignored except .gitkeep)
+│   ├── gebco/                   # gebco_2026_n22.0_s4.0_w112.0_e128.0.nc (subset)
+│   ├── philippines_landmass.geojson  # GeoBoundaries ADM0 land mask
 │   ├── GOT4.10c/                # extracted per-constituent NetCDFs
-│   ├── gebco_bathymetry/        # GEBCO_2024.nc (manual download)
-│   ├── gadm41_PHL_shp/          # GADM country boundary
-│   └── philippines-latest-free.shp/  # OSM coastline
+│   ├── fes2014/                 # manual download (AVISO registration)
+│   └── tpxo9/                   # manual download (TPXO registration)
 └── output/                      # model output (gitignored except .gitkeep)
     ├── results.nc
     ├── tidal_power_density.tif
@@ -144,9 +162,9 @@ hotspots on an unstructured mesh. Key modules:
 - `postprocess.py` — converts `r2d.slf` into the canonical `results.nc` / GeoTIFF / GeoJSON outputs.
 - `cli.py` — `python -m model.telemac {prepare,run,postprocess,pipeline}`.
 
-TELEMAC runs only via Docker; pin the image tag/digest. Docs: `docs/TELEMAC.md`,
-`docs/WORKFLOW.md`, `docs/CASE_AUTHORING.md`, `docs/POSTPROCESSING.md`,
-`docs/TROUBLESHOOTING.md`.
+TELEMAC runs only via Docker; pin the image tag/digest. Docs: `docs/engines/TELEMAC.md`,
+`docs/architecture/WORKFLOW.md`, `docs/engines/CASE_AUTHORING.md`,
+`docs/engines/POSTPROCESSING.md`, `docs/operations/TROUBLESHOOTING.md`.
 
 ## 4. How to run the code
 
@@ -159,7 +177,7 @@ python -c "
 from model.grid import StructuredGrid
 from model.solver import ShallowWaterSolver
 from model.forcing import make_synthetic_tidal_boundary
-# ... (see EXPLAINER.ipynb for full examples)
+# ... (see docs/notebooks/EXPLAINER.ipynb for full examples)
 "
 ```
 
@@ -169,8 +187,7 @@ importable; pytest handles this automatically.)
 ### 4.2 Production run (with data)
 
 ```bash
-python downloader.py --all          # fetch OSM, GADM, GOT4.10c
-# manually place GEBCO_2024.nc into data/gebco_bathymetry/
+python downloader.py --all          # fetch GEBCO subset, landmass, GOT4.10c
 python -m src.model.run            # uses src/model/config.yaml
 docker compose up -d               # web map at http://localhost:5000
 ```
@@ -180,7 +197,7 @@ docker compose up -d               # web map at http://localhost:5000
 ```bash
 source /home/bluey/miniconda3/etc/profile.d/conda.sh && conda activate tidaloss
 cd /home/bluey/dev/work/tidal-oss
-jupyter notebook docs/EXPLAINER.ipynb
+jupyter notebook docs/notebooks/EXPLAINER.ipynb
 ```
 
 ### 4.4 Run the test suite
@@ -194,8 +211,8 @@ python -m pytest          # model + web tests (config in pyproject.toml)
 ### 4.5 Lint, format, and type-check
 
 ```bash
-ruff check src downloader.py generate_test_data.py
-ruff format --check src downloader.py generate_test_data.py
+ruff check src downloader.py scripts/generate_test_data.py
+ruff format --check src downloader.py scripts/generate_test_data.py
 mypy src/model src/web
 ```
 
@@ -341,7 +358,7 @@ run standalone without a test runner (legacy behaviour, kept for debugging):
 3. Run `ruff check` + `ruff format --check` + `mypy src/model src/web` after
    any edit (these gates run in CI, § 4.5).
 3. Do **not** add back the patterns listed in § 5.3.
-4. The `docs/EXPLAINER.ipynb` notebook must remain runnable top-to-bottom.
+4. The `docs/notebooks/EXPLAINER.ipynb` notebook must remain runnable top-to-bottom.
    If you change a model API, update the notebook to match.
 5. The `_laplacian` fix in `solver.py` (5‑point stencil on interior cells)
    must not be regressed — it enables `ah > 0`.
@@ -350,9 +367,12 @@ run standalone without a test runner (legacy behaviour, kept for debugging):
 
 | File | Content |
 |------|---------|
-| `README.md` | Quick start, configuration table, API endpoints, troubleshooting |
-| `docs/MODEL.md` | Full physics derivation, term-by-term explanation, validation, references |
-| `docs/EXPLAINER.ipynb` | 2‑hour runnable workshop (beginner-friendly, all cells pass) |
+| `docs/README.md` | Documentation index (navigation by topic) |
+| `docs/architecture/ARCHITECTURE.md` | Integrated technical guide: concepts, architecture, diagrams, outputs |
+| `docs/concepts/MODEL.md` | Full physics derivation, term-by-term explanation, validation, references |
+| `docs/notebooks/EXPLAINER.ipynb` | 2‑hour runnable workshop (beginner-friendly, all cells pass) |
+| `docs/engines/TELEMAC.md` | TELEMAC-2D refinement backend operation |
+| `docs/engines/RECONCILIATION.md` | Parent/refinement nesting and acceptance criteria |
 | `src/README.md` | Step-by-step setup guide, dataset URLs, file listing |
 | `src/notebooks/01_hydrodynamic_model.ipynb` | First-principles educational walkthrough |
 | `src/model/config.yaml` | Default parameters for the screening model |

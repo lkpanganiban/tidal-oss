@@ -123,7 +123,8 @@ def _subgrid_land_mask(
     """
     import fiona
     from affine import Affine
-    from rasterio.features import rasterize
+
+    from ..bathymetry import _rasterise_land_geoms
 
     ny, nx = lon_sub.shape
     dlon = float(lon_sub[0, 1] - lon_sub[0, 0])
@@ -133,15 +134,131 @@ def _subgrid_land_mask(
     transform = Affine(dlon, 0.0, lon_ul, 0.0, dlat, lat_ul)
     with fiona.open(land_shapefile) as src:
         geoms = [(feat["geometry"], 1) for feat in src]
-    arr = rasterize(
-        geoms,
-        out_shape=(ny, nx),
-        transform=transform,
-        fill=0,
-        dtype="uint8",
-        all_touched=True,
+    return _rasterise_land_geoms(geoms, (ny, nx), transform, all_touched=True).astype(
+        bool
     )
-    return arr.astype(bool)
+
+
+def _assign_node_ids(wet: np.ndarray) -> tuple[np.ndarray, list[tuple[int, int]]]:
+    """Assign sequential mesh-node ids to wet cells of a boolean mask.
+
+    Returns ``(node_id, node_ji)`` where ``node_id`` is a 2-D int64 array
+    (``-1`` for dry cells) and ``node_ji`` is the list of ``(j, i)`` indices
+    (in mask-local coordinates) of the assigned nodes, in id order.
+    """
+    ny_loc, nx_loc = wet.shape
+    node_id = -np.ones((ny_loc, nx_loc), dtype=np.int64)
+    node_ji: list[tuple[int, int]] = []
+    for j in range(ny_loc):
+        for i in range(nx_loc):
+            if wet[j, i]:
+                node_id[j, i] = len(node_ji)
+                node_ji.append((j, i))
+    return node_id, node_ji
+
+
+def _gather_node_coords(node_ji, lon2d, lat2d, depth2d):
+    """Collect node lon/lat/depth arrays from a node-index list."""
+    node_lon = np.array([float(lon2d[j, i]) for (j, i) in node_ji], dtype=np.float64)
+    node_lat = np.array([float(lat2d[j, i]) for (j, i) in node_ji], dtype=np.float64)
+    node_h = np.array([float(depth2d[j, i]) for (j, i) in node_ji], dtype=np.float64)
+    return node_lon, node_lat, node_h
+
+
+def _triangulate_quads(node_id: np.ndarray) -> np.ndarray:
+    """Triangulate every quad whose four corners are wet -> ``(n, 3)`` ikle.
+
+    Adjacent wet cells sharing all four corners yield two triangles each.
+    """
+    ny_loc, nx_loc = node_id.shape
+    ikle = []
+    for j in range(ny_loc - 1):
+        for i in range(nx_loc - 1):
+            a, b = node_id[j, i], node_id[j, i + 1]
+            c, d = node_id[j + 1, i], node_id[j + 1, i + 1]
+            if a >= 0 and b >= 0 and c >= 0 and d >= 0:
+                ikle.append([a, b, d])
+                ikle.append([a, d, c])
+    return np.asarray(ikle, dtype=np.int64)
+
+
+def _classify_liquid_boundaries(
+    geom,
+    node_ji: list[tuple[int, int]],
+    nx: int,
+    ny: int,
+    is_dry,
+    edge_types: dict[str, str],
+) -> list[int]:
+    """Return the IPOBO indices of liquid boundary points.
+
+    A boundary node is solid when any 4-connected neighbour is land (so
+    coastlines form no-flux walls).  Otherwise its edge -- ``left``/``right``/
+    ``top``/``bottom`` from its position on the mesh rectangle -- is looked up
+    in ``edge_types`` (default ``solid``).  Interior (hole) boundary nodes are
+    always solid.
+
+    ``is_dry(j, i) -> bool`` reports whether the grid cell at (j, i) is land,
+    letting each builder supply its own land definition (screening-grid
+    neighbour vs fine-grid wet mask).
+    """
+    ipobo = geom.ipobo
+    nbnd = int((ipobo > 0).sum())
+    liquid_ipobo: list[int] = []
+    for k in range(1, nbnd + 1):
+        node = int(np.where(ipobo == k)[0][0])
+        j, i = node_ji[node]
+        if any(is_dry(j + dj, i + di) for dj, di in ((-1, 0), (1, 0), (0, -1), (0, 1))):
+            continue
+        if i == 0:
+            edge = "left"
+        elif i == nx - 1:
+            edge = "right"
+        elif j == 0:
+            edge = "bottom"
+        elif j == ny - 1:
+            edge = "top"
+        else:
+            continue  # interior hole boundary -> solid
+        if edge_types.get(edge, "solid") == "liquid":
+            liquid_ipobo.append(k)
+    return liquid_ipobo
+
+
+def _finalize_refinement_mesh(
+    out_path: str,
+    node_lon: np.ndarray,
+    node_lat: np.ndarray,
+    node_h: np.ndarray,
+    ikle: np.ndarray,
+    *,
+    title: str,
+    bbox: dict,
+) -> RefinementMesh:
+    """Project nodes, write the SERAFIN geometry, and build the RefinementMesh."""
+    lon0 = float(node_lon.mean())
+    lat0 = float(node_lat.mean())
+    x_m, y_m = project_to_local_meters(node_lon, node_lat, lon0, lat0)
+    geom = write_geometry(
+        out_path,
+        x_m.astype(np.float32),
+        y_m.astype(np.float32),
+        ikle,
+        title=title,
+        bed_elevation=-node_h.astype(np.float32),
+        var_name="ELEVATION Z",
+        var_unit="M",
+    )
+    return RefinementMesh(
+        path=out_path,
+        geometry=geom,
+        lon0=lon0,
+        lat0=lat0,
+        node_lon=node_lon,
+        node_lat=node_lat,
+        coordinates_are_meters=True,
+        bbox=bbox,
+    )
 
 
 def generate_mesh_from_grid(
@@ -186,101 +303,320 @@ def generate_mesh_from_grid(
         except Exception:
             pass
 
-    # Assign a mesh node only to wet grid cells.
-    node_id = -np.ones((ny_loc, nx_loc), dtype=np.int64)
-    node_ji: list[tuple[int, int]] = []
-    node_lon: list[float] = []
-    node_lat: list[float] = []
-    node_h: list[float] = []
-    for j in range(ny_loc):
-        for i in range(nx_loc):
-            if wet[j, i]:
-                node_id[j, i] = len(node_ji)
-                node_ji.append((j, i))
-                node_lon.append(float(lon_sub[j, i]))
-                node_lat.append(float(lat_sub[j, i]))
-                node_h.append(float(h_sub[j, i]))
-
-    if len(node_ji) == 0:
+    node_id, node_ji = _assign_node_ids(wet)
+    if not node_ji:
         raise ValueError("no wet cells in the refinement bounding box")
 
-    node_lon = np.asarray(node_lon, dtype=np.float64)
-    node_lat = np.asarray(node_lat, dtype=np.float64)
-    node_h = np.asarray(node_h, dtype=np.float64)
-
-    # Triangulate only quads whose four corners are all wet.
-    ikle = []
-    for j in range(ny_loc - 1):
-        for i in range(nx_loc - 1):
-            a = node_id[j, i]
-            b = node_id[j, i + 1]
-            c = node_id[j + 1, i]
-            d = node_id[j + 1, i + 1]
-            if a >= 0 and b >= 0 and c >= 0 and d >= 0:
-                ikle.append([a, b, d])
-                ikle.append([a, d, c])
-    ikle = np.asarray(ikle, dtype=np.int64)
-
-    lon0 = float(node_lon.mean())
-    lat0 = float(node_lat.mean())
-    x_m, y_m = project_to_local_meters(node_lon, node_lat, lon0, lat0)
-
-    bed_elevation = -node_h.astype(np.float32)
-    geom = write_geometry(
-        out_path,
-        x_m.astype(np.float32),
-        y_m.astype(np.float32),
-        ikle,
-        title=title,
-        bed_elevation=bed_elevation,
-        var_name="ELEVATION Z",
-        var_unit="M",
+    node_lon, node_lat, node_h = _gather_node_coords(node_ji, lon_sub, lat_sub, h_sub)
+    ikle = _triangulate_quads(node_id)
+    mesh = _finalize_refinement_mesh(
+        out_path, node_lon, node_lat, node_h, ikle, title=title, bbox=bbox
     )
+
+    if edge_types is not None:
+        # Any neighbour of a boundary node that is land (outside the wet mask)
+        # forces a no-flux coastline wall.
+        def is_dry(jj: int, ii: int) -> bool:
+            return _is_dry_neighbor(grid, j0, i0, jj, ii, 0, 0)
+
+        mesh.liquid_ipobo = _classify_liquid_boundaries(
+            mesh.geometry, node_ji, nx_loc, ny_loc, is_dry, edge_types
+        )
+    return mesh
+
+
+def generate_mesh_refined(
+    bbox: dict,
+    out_path: str,
+    *,
+    resolution_m: float,
+    gebco_path: str,
+    land_shapefile: str | None = None,
+    edge_types: dict[str, str] | None = None,
+    min_depth: float = 2.0,
+    max_depth: float = 6000.0,
+    title: str = "TIDAL-OSS REFINED MESH",
+    max_nodes: int = 60000,
+    min_island_cells: int = 12,
+    parent_grid=None,
+    depth_source: str = "parent",
+) -> RefinementMesh:
+    """Build a genuinely refined TELEMAC mesh.
+
+    ``depth_source`` selects the bathymetry the refinement runs on:
+
+    * ``"parent"`` (default) -- sample the screening grid's own depth and wet
+      mask onto the fine nodes.  The child then shares the parent's channel
+      depths, coastline and forcing, so refinement resolution is the *only*
+      difference between the two models and the zoom view reconciles with the
+      national view.
+    * ``"gebco"`` -- sample native-resolution GEBCO with the high-resolution
+      land polygon.  Physically finer, but the differing bathymetry makes the
+      refined currents diverge from the parent (reported in reconciliation).
+
+    Boundary nodes are liquid when they sit on an edge configured as
+    ``"liquid"`` in ``edge_types`` *and* their inward neighbour is wet; nodes
+    adjacent to any dry cell are coastline (solid).  The IPOBO indices of the
+    liquid points are stored on the returned mesh (``liquid_ipobo``).
+
+    Raises ``ValueError`` when the liquid boundaries do not share a single
+    connected wet component (i.e. there is no through-flow path), or when the
+    node budget ``max_nodes`` is exceeded.
+    """
+    import math as _math
+
+    from model.bathymetry import build_land_mask, load_gebco
+
+    lat_mid = 0.5 * (bbox["lat_min"] + bbox["lat_max"])
+    dlon = resolution_m / (111320.0 * _math.cos(_math.radians(lat_mid)))
+    dlat = resolution_m / 110540.0
+    nx = max(3, int(round((bbox["lon_max"] - bbox["lon_min"]) / dlon)) + 1)
+    ny = max(3, int(round((bbox["lat_max"] - bbox["lat_min"]) / dlat)) + 1)
+    if nx * ny > max_nodes:
+        raise ValueError(
+            f"refined mesh needs {nx * ny} nodes at {resolution_m:g} m over the "
+            f"{(bbox['lon_max'] - bbox['lon_min']) * 111.32:.0f} x "
+            f"{(bbox['lat_max'] - bbox['lat_min']) * 110.54:.0f} km box "
+            f"(budget {max_nodes}); increase telemac2d.mesh.resolution_m or "
+            "shrink the region margin"
+        )
+
+    lon1d = np.linspace(bbox["lon_min"], bbox["lon_max"], nx)
+    lat1d = np.linspace(bbox["lat_min"], bbox["lat_max"], ny)
+    lon2d, lat2d = np.meshgrid(lon1d, lat1d)
+
+    from scipy.interpolate import RegularGridInterpolator
+
+    pts = np.column_stack([lat2d.ravel(), lon2d.ravel()])
+
+    if depth_source == "parent" and parent_grid is not None:
+        # Parent-nested bathymetry: the child inherits the screening grid's
+        # exact depths and wet mask (horizontally refined), so bathymetry,
+        # forcing and drag are identical to the parent and resolution is the
+        # only remaining difference.
+        plat1 = np.asarray(parent_grid.lat, dtype=np.float64)[:, 0]
+        plon1 = np.asarray(parent_grid.lon, dtype=np.float64)[0, :]
+        ph = np.asarray(parent_grid.h, dtype=np.float64)
+        pmask = np.asarray(parent_grid.mask, dtype=bool)
+        if plat1[0] > plat1[-1]:
+            plat1 = plat1[::-1]
+            ph = ph[::-1, :]
+            pmask = pmask[::-1, :]
+        interp_h = RegularGridInterpolator(
+            (plat1, plon1),
+            ph,
+            # Nearest, not bilinear: bilinear smoothing rounds the parent's
+            # shallow channel cells — the very cells that carry its jets —
+            # and the refined currents then fall far below the parent's.
+            method="nearest",
+            bounds_error=False,
+            fill_value=None,
+        )
+        h_at = interp_h(pts).reshape(ny, nx)
+        # Nearest for the mask — a wet/land blend would create phantom coasts.
+        interp_m = RegularGridInterpolator(
+            (plat1, plon1),
+            pmask.astype(np.float64),
+            method="nearest",
+            bounds_error=False,
+            fill_value=None,
+        )
+        wet = interp_m(pts).reshape(ny, nx) > 0.5
+        depth = np.clip(np.maximum(h_at, 0.0), min_depth, max_depth)
+        wet &= depth >= min_depth
+    else:
+        # Native-resolution GEBCO sample at every node.
+        g_lon, g_lat, g_elev = load_gebco(
+            gebco_path,
+            lon_min=bbox["lon_min"] - dlon,
+            lon_max=bbox["lon_max"] + dlon,
+            lat_min=bbox["lat_min"] - dlat,
+            lat_max=bbox["lat_max"] + dlat,
+        )
+        interp = RegularGridInterpolator(
+            (g_lat, g_lon), g_elev, bounds_error=False, fill_value=None
+        )
+        elev = interp(pts).reshape(ny, nx)
+
+        wet = elev <= 0.0
+        depth = np.clip(np.maximum(-elev, 0.0), min_depth, max_depth)
+        wet &= depth >= min_depth
+
+        if land_shapefile:
+            try:
+                land = build_land_mask(lon1d, lat1d, land_shapefile)
+                wet &= ~land
+            except Exception:
+                pass
+
+    # Flood checkerboard corners (2x2 blocks wet in one diagonal only) and
+    # then any quad-graph pinch: a wet cell whose only mesh connections are
+    # two *opposite* quads (along a diagonal staircase coastline) makes the
+    # water rim pass through a single node twice — a "keyhole" that BIEF
+    # cannot traverse (STOSEG "wrong number of segments").  Flooding the dry
+    # diagonal cell restores the missing quad and removes the pinch.
+    def _flood_checkerboards(w: np.ndarray) -> np.ndarray:
+        d1 = w[:-1, :-1] & ~w[:-1, 1:] & ~w[1:, :-1] & w[1:, 1:]
+        d2 = ~w[:-1, :-1] & w[:-1, 1:] & w[1:, :-1] & ~w[1:, 1:]
+        flood = np.zeros_like(w)
+        flood[:-1, :-1] |= d1
+        flood[1:, 1:] |= d1
+        flood[:-1, 1:] |= d2
+        flood[1:, :-1] |= d2
+        return w | flood
+
+    wet = _flood_checkerboards(wet)
+
+    def _pinch_flood(w: np.ndarray) -> np.ndarray:
+        """Flood a dry cell completing a missing quad at every pinch node."""
+        ny, nx = w.shape
+        # q[j, i] = quad whose SE corner cell is (j, i), defined for 1<=j<=ny-1
+        q = np.zeros((ny, nx), dtype=bool)
+        q[1:, 1:] = w[:-1, :-1] & w[:-1, 1:] & w[1:, :-1] & w[1:, 1:]
+        qSE = q[1 : ny - 1, 1 : nx - 1]
+        qNW = q[2:ny, 2:nx]
+        qSW = q[1 : ny - 1, 2:nx]
+        qNE = q[2:ny, 1 : nx - 1]
+        pinch_a = qSE & qNW & ~qSW & ~qNE  # missing SW / NE quads
+        pinch_b = qSW & qNE & ~qSE & ~qNW  # missing SE / NW quads
+        out = w.copy()
+        for j, i in np.argwhere(pinch_a) + 1:
+            # SW quad members: (j-1,i), (j-1,i+1), (j,i+1); NE: (j+1,i-1), (j+1,i), (j,i-1)
+            for cand in ((j - 1, i + 1), (j - 1, i), (j, i + 1)):
+                if not out[cand]:
+                    out[cand] = True
+                    break
+            else:
+                for cand in ((j + 1, i - 1), (j + 1, i), (j, i - 1)):
+                    if not out[cand]:
+                        out[cand] = True
+                        break
+        for j, i in np.argwhere(pinch_b) + 1:
+            # SE quad members: (j-1,i-1), (j-1,i), (j,i-1); NW: (j+1,i+1), (j+1,i), (j,i+1)
+            for cand in ((j - 1, i - 1), (j - 1, i), (j, i - 1)):
+                if not out[cand]:
+                    out[cand] = True
+                    break
+            else:
+                for cand in ((j + 1, i + 1), (j + 1, i), (j, i + 1)):
+                    if not out[cand]:
+                        out[cand] = True
+                        break
+        return out
+
+    for _ in range(30):
+        fixed = _pinch_flood(wet)
+        if fixed.sum() == wet.sum():
+            break
+        wet = _flood_checkerboards(fixed)
+
+    # Drop tiny wet islets (below ``min_island_cells``): they would only add
+    # unresolved rims to the mesh.
+    try:
+        from scipy import ndimage
+
+        lab, nlab = ndimage.label(wet, structure=np.ones((3, 3)))
+        sizes = np.bincount(lab.ravel())
+        sizes[0] = 0
+        wet &= sizes[lab] >= min_island_cells
+    except ImportError:
+        pass
+
+    # --- nodes on wet cells ---
+    node_id, node_ji = _assign_node_ids(wet)
+    if not node_ji:
+        raise ValueError("no wet cells in the refinement bounding box")
+
+    node_lon, node_lat, node_h = _gather_node_coords(node_ji, lon2d, lat2d, depth)
+    ikle = _triangulate_quads(node_id)
+
+    # Prune nodes not referenced by any element (isolated wet cells — a wet
+    # node whose four-neighbour quads are all broken).  An orphan node has no
+    # element but is still counted as a boundary point by BIEF, which rejects
+    # the mesh with "STOSEG: WRONG NUMBER OF SEGMENTS".
+    used = np.unique(ikle)
+    if used.size != node_lon.size:
+        remap = -np.ones(node_lon.size, dtype=np.int64)
+        remap[used] = np.arange(used.size)
+        ikle = remap[ikle]
+        node_lon = node_lon[used]
+        node_lat = node_lat[used]
+        node_h = node_h[used]
+        node_ji = [node_ji[u] for u in used]
+
+    mesh = _finalize_refinement_mesh(
+        out_path, node_lon, node_lat, node_h, ikle, title=title, bbox=bbox
+    )
+
+    def _dry(j: int, i: int) -> bool:
+        if 0 <= j < ny and 0 <= i < nx:
+            return not bool(wet[j, i])
+        return False  # outside the box counts as open water
 
     liquid_ipobo = None
     if edge_types is not None:
-        ipobo = geom.ipobo
-        nbnd = int((ipobo > 0).sum())
-        liquid_ipobo = []
-        for k in range(1, nbnd + 1):
-            node = int(np.where(ipobo == k)[0][0])
-            j, i = node_ji[node]
-            # Coastline: any land neighbour forces a solid (no-flux) wall.
-            touches_land = any(
-                _is_dry_neighbor(grid, j0, i0, j, i, dj, di)
-                for dj, di in ((-1, 0), (1, 0), (0, -1), (0, 1))
-            )
-            if touches_land:
-                continue
-            on_left = i == 0
-            on_right = i == nx_loc - 1
-            on_bottom = j == 0
-            on_top = j == ny_loc - 1
-            if not (on_left or on_right or on_bottom or on_top):
-                # Interior boundary (e.g. a hole) -> solid wall.
-                continue
-            if on_left:
-                edge = "left"
-            elif on_right:
-                edge = "right"
-            elif on_top:
-                edge = "top"
-            else:
-                edge = "bottom"
-            if edge_types.get(edge, "solid") == "liquid":
-                liquid_ipobo.append(k)
+        liquid_ipobo = _classify_liquid_boundaries(
+            mesh.geometry, node_ji, nx, ny, _dry, edge_types
+        )
 
-    return RefinementMesh(
-        path=out_path,
-        geometry=geom,
-        lon0=lon0,
-        lat0=lat0,
-        node_lon=node_lon,
-        node_lat=node_lat,
-        coordinates_are_meters=True,
-        bbox=bbox,
-        liquid_ipobo=liquid_ipobo,
+    _validate_throughflow(
+        wet, edge_types, liquid_ipobo, node_ji, mesh.geometry.ipobo, nx, ny
     )
+
+    mesh.liquid_ipobo = liquid_ipobo
+    return mesh
+
+
+def _validate_throughflow(
+    wet: np.ndarray,
+    edge_types: dict[str, str] | None,
+    liquid_ipobo: list[int] | None,
+    node_ji: list[tuple[int, int]],
+    ipobo: np.ndarray,
+    nx: int,
+    ny: int,
+) -> None:
+    """Reject domains whose liquid boundaries have no wet path between them.
+
+    Uses 4-connected component labelling of the wet mask: every liquid
+    boundary node must belong to the same wet component, otherwise the tide
+    cannot propagate through the domain and the TELEMAC run would refine a
+    hydraulically dead box.
+
+    When ``edge_types`` is ``None`` the boundary classification is deferred to
+    the edge-based fallback (:func:`model.telemac.boundaries.classify_boundary_points`),
+    so no through-flow validation is performed here.
+    """
+    if edge_types is None:
+        return
+    liquid_edges = [
+        e for e in ("left", "right", "top", "bottom") if edge_types.get(e) == "liquid"
+    ]
+    if not liquid_edges or not liquid_ipobo:
+        raise ValueError(
+            "refinement domain has no usable liquid boundary "
+            f"(edge_types={edge_types}); widen the region or adjust margin"
+        )
+    try:
+        from scipy import ndimage
+    except ImportError:
+        return  # validation is best-effort without scipy
+
+    labels, _ = ndimage.label(wet)
+    comps = set()
+    for k in liquid_ipobo:
+        node = int(np.where(ipobo == k)[0][0])
+        j, i = node_ji[node]
+        lab = int(labels[j, i])
+        if lab == 0:
+            raise ValueError("liquid boundary node classified on a dry cell")
+        comps.add(lab)
+    if len(comps) > 1:
+        raise ValueError(
+            "liquid boundaries span "
+            f"{len(comps)} disconnected wet components — no through-flow path; "
+            "widen the region so both open edges reach the same channel"
+        )
 
 
 def load_supplied_mesh(
@@ -329,101 +665,96 @@ def load_supplied_mesh(
     )
 
 
-def _points_in_mesh(
-    flat_lon: np.ndarray,
-    flat_lat: np.ndarray,
-    node_lon: np.ndarray,
-    node_lat: np.ndarray,
-    triangles: np.ndarray,
-) -> np.ndarray:
-    """Boolean mask: which target points fall inside the unstructured mesh.
+class MeshRasterizer:
+    """Fast repeated node→grid interpolation for one mesh/target pair.
 
-    ``triangles`` is the ``(Ne, 3)`` 0-based element connectivity.  A target
-    point is "inside" if it lies in any triangle (barycentric test).  This lets
-    us restrict rasterised fields to the actual (possibly non-convex) mesh
-    footprint instead of filling the whole rectangular bounding box.
+    Building scipy's ``griddata`` per frame re-runs Delaunay triangulation
+    and (with the triangle-footprint mask) an O(targets x triangles) point
+    test — minutes per case at refinement-scale meshes.  Here the geometry
+    work (Delaunay, per-target barycentric weights, footprint mask, nearest
+    fallback tree) is done once; each :meth:`raster` call is then a small
+    gather and matrix product.
     """
-    pts = np.column_stack([flat_lon, flat_lat])  # (n, 2)
-    v0 = np.column_stack([node_lon[triangles[:, 0]], node_lat[triangles[:, 0]]])
-    v1 = np.column_stack([node_lon[triangles[:, 1]], node_lat[triangles[:, 1]]])
-    v2 = np.column_stack([node_lon[triangles[:, 2]], node_lat[triangles[:, 2]]])
-    e1 = v1 - v0
-    e2 = v2 - v0
-    d = pts[:, None, :] - v0[None, :, :]  # (n, Ne, 2)
-    det = e1[:, 0] * e2[:, 1] - e1[:, 1] * e2[:, 0]  # (Ne,)
-    a = (d[..., 0] * e2[:, 1][None, :] - d[..., 1] * e2[:, 0][None, :]) / det[None, :]
-    b = (d[..., 1] * e1[:, 0][None, :] - d[..., 0] * e1[:, 1][None, :]) / det[None, :]
-    eps = 1e-9
-    inside_tri = (a >= -eps) & (b >= -eps) & ((a + b) <= 1.0 + eps)
-    return inside_tri.any(axis=1)
 
+    _CHUNK = 512  # target points per footprint chunk (bounds memory)
 
-def rasterize_to_grid(
-    values: np.ndarray,
-    node_lon: np.ndarray,
-    node_lat: np.ndarray,
-    target_lon: np.ndarray,
-    target_lat: np.ndarray,
-    triangles: np.ndarray | None = None,
-) -> np.ndarray:
-    """Interpolate unstructured node values onto a regular lon/lat grid.
+    def __init__(
+        self,
+        node_lon: np.ndarray,
+        node_lat: np.ndarray,
+        target_lon: np.ndarray,
+        target_lat: np.ndarray,
+        triangles: np.ndarray | None = None,
+    ) -> None:
+        from scipy.spatial import Delaunay, cKDTree
 
-    Uses scipy ``griddata`` (linear, falling back to nearest) when available;
-    otherwise a simple inverse-distance weighting is used so the post-processor
-    does not hard-depend on scipy being importable at call time.
+        node_lon = np.asarray(node_lon, dtype=np.float64).ravel()
+        node_lat = np.asarray(node_lat, dtype=np.float64).ravel()
+        self.ny, self.nx = target_lat.shape
+        tgt = np.column_stack(
+            [
+                np.asarray(target_lon, dtype=np.float64).ravel(),
+                np.asarray(target_lat, dtype=np.float64).ravel(),
+            ]
+        )
+        pts = np.column_stack([node_lon, node_lat])
+        self._tree = cKDTree(pts)
 
-    When ``triangles`` (the ``(Ne, 3)`` element connectivity) is supplied, the
-    result is masked to the actual mesh footprint: target points that fall
-    outside every triangle are set to NaN so land / outside-mesh cells do not
-    get spurious interpolated values (which would otherwise render as a solid
-    rectangle covering the whole bounding box).
-    """
-    values = np.asarray(values, dtype=np.float64)
-    node_lon = np.asarray(node_lon, dtype=np.float64).ravel()
-    node_lat = np.asarray(node_lat, dtype=np.float64).ravel()
-    ny, nx = target_lat.shape
-    flat_lon = target_lon.ravel()
-    flat_lat = target_lat.ravel()
-    valid = np.isfinite(values)
+        tri = Delaunay(pts)
+        simplex = tri.find_simplex(tgt)
+        inside_hull = simplex >= 0
+        tid = np.where(inside_hull, simplex, 0)
+        transf = tri.transform[tid]  # (n, 3, 2)
+        d = tgt - transf[:, 2]
+        b1 = np.einsum("ij,ij->i", d, transf[:, 0])
+        b2 = np.einsum("ij,ij->i", d, transf[:, 1])
+        self._w = np.column_stack([b1, b2, 1.0 - b1 - b2])
+        self._vidx = tri.simplices[tid]
+        self._inside_hull = inside_hull
 
-    try:
-        from scipy.interpolate import griddata
+        # Mesh-footprint mask: target points that fall inside at least one of
+        # the mesh's own triangles (respects concave coastlines; Delaunay
+        # alone would fill the convex hull across bays and land).
+        self._inside_mesh = (
+            self._footprint_mask(tgt, node_lon, node_lat, triangles)
+            if triangles is not None
+            else np.ones(tgt.shape[0], dtype=bool)
+        )
+        # Points inside the hull but outside the mesh: nearest-neighbour fill
+        # (matches the legacy griddata+fallback behaviour before masking).
+        self._nearest_idx = self._tree.query(tgt)[1]
 
-        pts = np.column_stack([node_lon[valid], node_lat[valid]])
-        src = values[valid]
-        out = griddata(pts, src, (flat_lon, flat_lat), method="linear")
-        if np.isnan(out).any():
-            out_near = griddata(pts, src, (flat_lon, flat_lat), method="nearest")
-            out = np.where(np.isnan(out), out_near, out)
-    except Exception:
-        out = _idw(node_lon[valid], node_lat[valid], values[valid], flat_lon, flat_lat)
+    def _footprint_mask(self, tgt, node_lon, node_lat, triangles) -> np.ndarray:
+        triangles = np.asarray(triangles, dtype=np.int64)
+        v0x = node_lon[triangles[:, 0]]
+        v0y = node_lat[triangles[:, 0]]
+        e1x = node_lon[triangles[:, 1]] - v0x
+        e1y = node_lat[triangles[:, 1]] - v0y
+        e2x = node_lon[triangles[:, 2]] - v0x
+        e2y = node_lat[triangles[:, 2]] - v0y
+        det = e1x * e2y - e1y * e2x
+        out = np.zeros(tgt.shape[0], dtype=bool)
+        for s in range(0, tgt.shape[0], self._CHUNK):
+            chunk = tgt[s : s + self._CHUNK]
+            dx = chunk[None, :, 0] - v0x[:, None]
+            dy = chunk[None, :, 1] - v0y[:, None]
+            a = (dx * e2y[:, None] - dy * e2x[:, None]) / det[:, None]
+            b = (dy * e1x[:, None] - dx * e1y[:, None]) / det[:, None]
+            eps = 1e-9
+            out[s : s + self._CHUNK] = (
+                (a >= -eps) & (b >= -eps) & ((a + b) <= 1.0 + eps)
+            ).any(axis=0)
+        return out
 
-    if triangles is not None:
-        inside = _points_in_mesh(flat_lon, flat_lat, node_lon, node_lat, triangles)
-        out = np.where(inside, out, np.nan)
-
-    return out.reshape(ny, nx)
-
-
-def _idw(
-    src_lon: np.ndarray,
-    src_lat: np.ndarray,
-    src_val: np.ndarray,
-    tgt_lon: np.ndarray,
-    tgt_lat: np.ndarray,
-    power: float = 2.0,
-) -> np.ndarray:
-    out = np.full(tgt_lon.shape, np.nan)
-    for k in range(tgt_lon.shape[0]):
-        dlon = src_lon - tgt_lon[k]
-        dlat = src_lat - tgt_lat[k]
-        d2 = dlon**2 + dlat**2
-        if d2.min() == 0.0:
-            out[k] = src_val[d2.argmin()]
-            continue
-        w = 1.0 / np.power(d2, power / 2.0)
-        out[k] = float(np.sum(w * src_val) / np.sum(w))
-    return out
+    def raster(self, values: np.ndarray) -> np.ndarray:
+        """Interpolate one frame of node values onto the target grid."""
+        vals = np.asarray(values, dtype=np.float64).ravel()
+        out = np.einsum("ij,ij->i", self._w, vals[self._vidx])
+        outside = ~self._inside_hull
+        if outside.any():
+            out[outside] = vals[self._nearest_idx[outside]]
+        out[~self._inside_mesh] = np.nan
+        return out.reshape(self.ny, self.nx)
 
 
 def mesh_manifest(mesh: RefinementMesh) -> dict:

@@ -13,7 +13,7 @@
 #      a single closed-end pocket).
 #   3. The imposed tide is made to *propagate* along the strait axis
 #      (propagation_axis: lat) so the run shows through-flow instead of a
-#      standing-wave node.  See docs/TELEMAC.md "Standing-wave caveat".
+#      standing-wave node.  See docs/engines/TELEMAC.md "Standing-wave caveat".
 #
 # Run with:
 #   PYTHONPATH=src .venv/bin/python -m model.telemac pipeline \
@@ -94,7 +94,7 @@ telemac2d:
       # Impose a propagating tide so the strait shows through-flow instead of a
       # standing wave.  The lag across the ~24 km box is omega*L/phase_speed; at
       # phase_speed_mps=2.0 that is ~96 deg, i.e. a progressive (not resonant)
-      # wave.  This is a modelling choice, not a measured value (see docs/TELEMAC.md).
+#       wave.  This is a modelling choice, not a measured value (see docs/engines/TELEMAC.md).
       phase_speed_mps: 2.0
       propagation_axis: lat
       cluster_radius_km: 15.0

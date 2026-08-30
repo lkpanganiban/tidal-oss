@@ -1,17 +1,28 @@
 #!/usr/bin/env python3
-"""Download required external datasets for the Philippine tidal-energy workflow.
+"""Download the external datasets used by the Philippine tidal-energy workflow.
 
-Datasets:
-  GEBCO 2024          — global bathymetry (NetCDF, ~2.7 GB)
-  Philippines OSM     — coastline / land-polygon shapefile from Geofabrik
-  Philippines GADM    — admin-boundary shapefile from GADM
-  FES2014 harmonics   — tidal constituent amplitude & phase (manual)
+The downloader mirrors exactly what the model consumes (see
+``src/model/config.yaml``) and the files already staged in ``data/``:
+
+  GEBCO 2026            — Philippine-region bathymetry subset (NetCDF).
+                         Fetched from a cloud-optimised GeoTIFF mirror on
+                         ``data.source.coop`` via range requests, so only the
+                         ~64 MB region window is downloaded (not the 7 GB
+                         global grid).
+  Philippines landmass  — ADM0 boundary GeoJSON from GeoBoundaries
+                         (``data/philippines_landmass.geojson``).
+  GOT4.10c              — NASA GSFC ocean tide model (per-constituent NetCDF,
+                         no registration). Archive is auto-extracted.
+
+FES2014 and TPXO9 remain registration-gated; the downloader prints the manual
+steps but cannot automate them.
 
 Usage:
   python downloader.py                  # guided interactive mode
   python downloader.py --all            # download everything that can be automated
   python downloader.py --gebco          # bathymetry only
-  python downloader.py --shoreline      # OSM + GADM shapefiles only
+  python downloader.py --landmask       # Philippines landmass only
+  python downloader.py --tidal          # GOT4.10c + manual FES2014/TPXO9 steps
   python downloader.py --data-dir ./data  # custom output directory
 """
 
@@ -20,6 +31,7 @@ from __future__ import annotations
 import argparse
 import os
 import shutil
+import tarfile
 import zipfile
 from pathlib import Path
 from urllib.request import urlretrieve
@@ -28,111 +40,100 @@ from urllib.request import urlretrieve
 # Configuration
 # ---------------------------------------------------------------------------
 
+PHILIPPINES_BBOX = {
+    "lon_min": 112.0,
+    "lon_max": 128.0,
+    "lat_min": 4.0,
+    "lat_max": 22.0,
+}
+
+# GeoBoundaries pinned release matching data/philippines_landmass.geojson
+# (shapeID 24100683B85265433280220 = PHL ADM0 build of Dec 2023).
+GEOBOUNDARIES_PHL_ADM0 = (
+    "https://github.com/wmgeolab/geoBoundaries/raw/9469f09/releaseData/"
+    "gbOpen/PHL/ADM0/geoBoundaries-PHL-ADM0_simplified.geojson"
+)
+
+# Cloud-optimised GEBCO 2026 grid (EPSG:4326, 15 arc-sec). giswqs mirror of the
+# official NERC CEDA GEBCO_2026 grid. Official global NetCDF (7.4 GB) lives at:
+#   https://dap.ceda.ac.uk/bodc/gebco/global/gebco_2026/ice_surface_elevation/netcdf/GEBCO_2026.nc
+GEBCO_COG_URL = (
+    "https://data.source.coop/giswqs/gebco-bathymetry/gebco_2026/gebco_2026.tif"
+)
+
 DATASETS: dict[str, dict] = {
     "gebco": {
-        "name": "GEBCO 2026 bathymetry",
-        "required": False,
-        "size_hint": "~3.5 GB (global NetCDF)",
-        "urls": [],
-        "dest": "GEBCO_2026.nc",
-        "post_process": None,
-        "manual_url": "https://www.gebco.net/data_and_products/gridded_bathymetry_data/gebco_2024/",
+        "name": "GEBCO 2026 bathymetry (Philippines subset)",
+        "size_hint": "~64 MB (NetCDF, 15 arc-sec)",
+        "dest": "gebco/gebco_2026_n22.0_s4.0_w112.0_e128.0.nc",
+        "fetcher": "gebco_subset",
+        "manual_url": GEBCO_COG_URL,
         "manual_note": (
-            "GEBCO requires accepting licence terms — no direct download URL.\n"
-            "  1. Open the link above and fill in your details.\n"
-            "  2. Download the global NetCDF: GEBCO_2024.nc (~2.7 GB)\n"
-            "  3. Place it at: data/GEBCO_2024.nc\n"
-            "  Without bathymetry the model still runs on a synthetic flat grid."
+            "Subset is read from a cloud-optimised GeoTIFF mirror of the "
+            "official GEBCO 2026 grid using rasterio range requests. "
+            "Requires: rasterio, xarray, netCDF4."
         ),
     },
-    "osm_shoreline": {
-        "name": "OSM Philippines shoreline (Geofabrik)",
-        "required": False,
-        "size_hint": "~25 MB (zipped)",
-        "urls": [
-            "https://download.geofabrik.de/asia/philippines-latest-free.shp.zip",
-        ],
-        "dest": "philippines-latest-free.shp.zip",
-        "post_process": "unzip_osm",
-        "manual_url": "https://download.geofabrik.de/asia/philippines.html",
+    "landmask": {
+        "name": "Philippines landmass (GeoBoundaries ADM0)",
+        "size_hint": "~2.5 MB (GeoJSON)",
+        "urls": [GEOBOUNDARIES_PHL_ADM0],
+        "dest": "philippines_landmass.geojson",
+        "manual_url": "https://www.geoboundaries.org/",
         "manual_note": (
-            "Download the .shp.zip from Geofabrik and place it in the data/ directory."
+            "Country boundary used to rasterise the land mask "
+            "(bathymetry.land_shapefile in config.yaml)."
         ),
     },
-    "gadm": {
-        "name": "GADM Philippines admin boundary",
-        "required": False,
-        "size_hint": "~15 MB (zipped)",
+    "got": {
+        "name": "GOT4.10c tidal constituents (NASA GSFC)",
+        "size_hint": "~44 MB (tar.gz; no registration)",
         "urls": [
-            "https://geodata.ucdavis.edu/gadm/gadm4.1/shp/gadm41_PHL_shp.zip",
+            "https://earth.gsfc.nasa.gov/sites/default/files/2023-12/got4.10c.tar.gz",
         ],
-        "dest": "gadm41_PHL_shp.zip",
-        "post_process": "unzip",
-        "manual_url": "https://gadm.org/download_country.html",
+        "dest": "got4.10c.tar.gz",
+        "post_process": "untar_got",
+        "manual_url": "https://earth.gsfc.nasa.gov/geo/data/ocean-tide-models",
         "manual_note": (
-            "Select Philippines → Shapefile → download gadm41_PHL_shp.zip.  "
-            "Place it in the data/ directory."
+            "Extracted to data/GOT4.10c/; the model reads the per-constituent "
+            "NetCDFs in data/GOT4.10c/grids_oceantide_netcdf/."
         ),
     },
     "fes2014": {
         "name": "FES2014 tidal constituents",
-        "required": False,
         "size_hint": "~2 GB (global per-constituent files)",
-        "urls": [],
         "dest": None,
-        "post_process": None,
         "manual_url": (
             "https://www.aviso.altimetry.fr/en/data/products/"
             "auxiliary-products/global-tide-fes.html"
         ),
         "manual_note": (
-            "FES2014 requires AVISO registration — no direct download URL.\n"
+            "FES2014 requires AVISO registration - no direct download URL.\n"
             "  1. Register at the link above.\n"
             "  2. Download per-constituent NetCDF files for M2, S2, K1, O1\n"
             "     (e.g. M2_ocean.nc, M2_load.nc, S2_ocean.nc, ...)\n"
             "  3. Place them at: data/fes2014/\n"
-            "  The model uses synthetic M2 forcing if these are absent."
+            "  4. Set config: tidal_forcing.source: fes2014"
         ),
     },
     "tpxo9": {
         "name": "TPXO9-atlas tidal constituents",
-        "required": False,
         "size_hint": "~4.1 GB (single multi-constituent NetCDF)",
-        "urls": [],
         "dest": None,
-        "post_process": None,
         "manual_url": "https://www.tpxo.net/global/tpxo9-atlas",
         "manual_note": (
             "TPXO9-atlas requires registration on the TPXO portal.\n"
             "  1. Register and log in at the link above.\n"
             "  2. Download the grid file: h_tpxo9.v1.nc (~4.1 GB)\n"
             "  3. Place it at: data/tpxo9/h_tpxo9.v1.nc\n"
-            "  4. Set config: tidal_forcing.source: tpxo9, path: data/tpxo9/h_tpxo9.v1.nc"
-        ),
-    },
-    "got": {
-        "name": "GOT4.10c tidal harmonics (NASA GSFC — no registration)",
-        "required": False,
-        "size_hint": "~44 MB (zipped tar)",
-        "urls": [
-            "https://earth.gsfc.nasa.gov/sites/default/files/2023-12/got4.10c.tar.gz",
-        ],
-        "dest": "got4.10c.tar.gz",
-        "post_process": None,
-        "manual_url": "https://earth.gsfc.nasa.gov/geo/data/ocean-tide-models",
-        "manual_note": (
-            "NASA Goddard Ocean Tide models are free — no registration required.\n"
-            "  Download GOT4.10c (recommended) or GOT5.5 (~875 MB, higher res).\n"
-            "  The data is in OTIS binary format; extract with tar xzf and\n"
-            "  use OTPS (Fortran) or TMD (Matlab) to read harmonics.\n"
-            "  NetCDF conversion may be needed before use with this model."
+            "  4. Set config: tidal_forcing.source: tpxo9"
         ),
     },
 }
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Download / extraction helpers
 # ---------------------------------------------------------------------------
 
 
@@ -156,17 +157,17 @@ def _report_hook(block_num: int, block_size: int, total_size: int):
 
 
 def _download(url: str, dest: Path) -> bool:
-    """Download a file with progress bar.  Returns True on success."""
-    print(f"  → {url}")
+    """Download a file with a progress bar. Returns True on success."""
+    print(f"  -> {url}")
     try:
         Path(dest).parent.mkdir(parents=True, exist_ok=True)
         urlretrieve(url, dest, reporthook=_report_hook)
         print()
         size_mb = Path(dest).stat().st_size / 1e6
-        print(f"  ✓ saved  {dest}  ({size_mb:.1f} MB)")
+        print(f"  ok saved  {dest}  ({size_mb:.1f} MB)")
         return True
     except Exception as exc:
-        print(f"\n  ✗ failed: {exc}")
+        print(f"\n  x failed: {exc}")
         if Path(dest).exists():
             Path(dest).unlink(missing_ok=True)
         return False
@@ -175,9 +176,9 @@ def _download(url: str, dest: Path) -> bool:
 def _safe_member_path(extract_dir: Path, member: str) -> Path:
     """Resolve an archive member path safely inside *extract_dir*.
 
-    Guards against zip-slip attacks where a crafted archive contains
-    members such as ``../evil.py`` or absolute paths that would escape
-    the extraction directory.
+    Guards against zip-slip / path-traversal where a crafted archive contains
+    members such as ``../evil.py`` or absolute paths that would escape the
+    extraction directory.
     """
     member_path = Path(member)
     if member_path.is_absolute() or ".." in member_path.parts:
@@ -187,7 +188,6 @@ def _safe_member_path(extract_dir: Path, member: str) -> Path:
     try:
         target_resolved = target.resolve()
     except OSError:
-        # resolve() can fail on symlink loops etc.; fall back to parts check
         target_resolved = target
     if not str(target_resolved).startswith(str(extract_root)):
         raise ValueError(f"Archive member escapes extraction dir: {member!r}")
@@ -196,31 +196,119 @@ def _safe_member_path(extract_dir: Path, member: str) -> Path:
 
 def _unzip(zip_path: Path, extract_dir: Path, flatten: bool = False):
     """Unzip a file into extract_dir (safe against path traversal)."""
-    print(f"  → extracting to {extract_dir}/")
+    print(f"  -> extracting to {extract_dir}/")
     with zipfile.ZipFile(zip_path, "r") as zf:
-        for member in zf.namelist():
-            target = (
-                _safe_member_path(extract_dir, Path(member).name)
-                if flatten
-                else _safe_member_path(extract_dir, member)
-            )
+        members = zf.namelist()
+        for member in members:
+            name = Path(member).name if flatten else member
+            target = _safe_member_path(extract_dir, name)
             if member.endswith("/"):
                 target.mkdir(parents=True, exist_ok=True)
                 continue
             target.parent.mkdir(parents=True, exist_ok=True)
             with zf.open(member) as src, open(target, "wb") as dst:
                 shutil.copyfileobj(src, dst)
-    print(f"  ✓ extracted {len(zf.namelist())} files")
+    print(f"  ok extracted {len(members)} files")
 
 
-def _unzip_osm(zip_path: Path, extract_dir: Path):
-    """Unzip OSM shapefile — keep flat structure."""
-    _unzip(zip_path, extract_dir, flatten=True)
+def _untar(tar_path: Path, extract_dir: Path):
+    """Extract a (possibly gzipped) tar into extract_dir (safe traversal)."""
+    print(f"  -> extracting to {extract_dir}/")
+    with tarfile.open(tar_path, "r:*") as tf:
+        members = tf.getmembers()
+        for member in members:
+            _safe_member_path(extract_dir, member.name)
+        tf.extractall(extract_dir)
+    print(f"  ok extracted {len(members)} members")
+
+
+def _untar_got(tar_path: Path, data_dir: Path):
+    """Extract the GOT4.10c archive into data_dir (keeps GOT4.10c/ prefix)."""
+    if not tar_path.exists():
+        return
+    got_dir = data_dir / "GOT4.10c"
+    if got_dir.is_dir() and any(got_dir.iterdir()):
+        print(f"  ok already extracted at {got_dir}/")
+        return
+    _untar(tar_path, data_dir)
+
+
+def _fetch_gebco_subset(dest: Path, data_dir: Path) -> bool:
+    """Read the Philippines window of the GEBCO COG and write a NetCDF subset.
+
+    Uses rasterio range requests so only the region window (~17 MB) is
+    transferred, not the 7.4 GB global grid.
+    """
+    import numpy as np
+    import rasterio
+    import xarray as xr
+    from rasterio.windows import from_bounds
+
+    b = PHILIPPINES_BBOX
+    try:
+        with rasterio.open(GEBCO_COG_URL) as src:
+            win = from_bounds(
+                b["lon_min"],
+                b["lat_min"],
+                b["lon_max"],
+                b["lat_max"],
+                transform=src.transform,
+            )
+            elev = src.read(1, window=win).astype(np.float32)[::-1, :]
+            dlat, dlon = src.transform[4], src.transform[0]  # e = -dy, a = dx
+            lat0 = src.transform.f + (win.row_off + 0.5) * dlat
+            lon0 = src.transform.c + (win.col_off + 0.5) * dlon
+    except Exception as exc:
+        print(f"  x failed to read GEBCO subset: {exc}")
+        return False
+
+    ny, nx = elev.shape
+    # Elevation rows run north->south after the read (flipped to south->north
+    # above); emit ascending lat to match the official GEBCO subset convention.
+    lat_south = lat0 + dlat * (ny - 1)
+    lat = lat_south + (-dlat) * np.arange(ny)
+    lon = lon0 + dlon * np.arange(nx)
+
+    ds = xr.Dataset(
+        {"elevation": (("lat", "lon"), elev)},
+        coords={"lat": lat, "lon": lon},
+        attrs={
+            "title": "GEBCO_2026 Grid (Philippines subset)",
+            "Conventions": "CF-1.6, ACDD-1.3",
+            "comment": (
+                "The data in the GEBCO_2026 Grid should not be used for "
+                "navigation or any purpose relating to safety at sea."
+            ),
+            "source": (
+                "GEBCO Bathymetric Compilation Group 2026. The GEBCO_2026 "
+                "Grid, doi:10.5285/4f68d5c7-45eb-f999-e063-7086abc036fa"
+            ),
+            "license": "https://www.gebco.net/data_and_products/gridded_bathymetry_data/",
+        },
+    )
+    ds["elevation"].attrs = {
+        "long_name": "elevation (relative to sea level)",
+        "units": "m",
+        "positive": "up",
+    }
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        ds.to_netcdf(dest)
+    except Exception as exc:
+        print(f"  x failed to write NetCDF: {exc}")
+        return False
+    size_mb = dest.stat().st_size / 1e6
+    print(f"  ok saved  {dest}  ({size_mb:.1f} MB)")
+    return True
 
 
 POST_PROCESSORS = {
-    "unzip": lambda p, d: _unzip(p, d),
-    "unzip_osm": lambda p, d: _unzip_osm(p, d),
+    "untar_got": lambda p, d: _untar_got(p, d),
+}
+
+FETCHERS = {
+    "gebco_subset": lambda dest, data_dir: _fetch_gebco_subset(dest, data_dir),
 }
 
 
@@ -229,80 +317,75 @@ POST_PROCESSORS = {
 # ---------------------------------------------------------------------------
 
 
+def _post_output_present(ds: dict, data_dir: Path) -> bool:
+    """Return True if the dataset's post-processed output already exists."""
+    if ds.get("dest"):
+        prefix = ds["dest"].rsplit(".", 1)[0]
+        extract_dir = data_dir / prefix
+        if extract_dir.is_dir() and any(extract_dir.iterdir()):
+            return True
+    if ds.get("post_process") == "untar_got":
+        nc_dir = data_dir / "GOT4.10c" / "grids_oceantide_netcdf"
+        return nc_dir.is_dir() and any(nc_dir.glob("*.nc"))
+    return False
+
+
 def download_dataset(
     key: str,
     data_dir: Path,
     *,
     skip_existing: bool = True,
 ) -> bool:
-    """Download a single dataset.  Returns True if acquired (or already present)."""
+    """Acquire a single dataset. Returns True if present after the call."""
     ds = DATASETS[key]
     name = ds["name"]
 
-    print(f"\n{'─' * 60}")
+    print(f"\n{'-' * 60}")
     print(f"  {name}")
     print(f"  Size: {ds['size_hint']}")
-    if not ds["required"]:
-        print("  (optional — model can run with synthetic/grid data)")
     print()
 
-    dest_path = None
-    if ds["dest"]:
-        dest_path = data_dir / ds["dest"]
+    dest_path = data_dir / ds["dest"] if ds["dest"] else None
 
-    # --- If already present ---
     if dest_path and dest_path.exists() and skip_existing:
         size_mb = dest_path.stat().st_size / 1e6
-        print(f"  ✓ already exists  {dest_path}  ({size_mb:.1f} MB)")
-        _post_process(ds, data_dir, dest_path)
+        print(f"  ok already exists  {dest_path}  ({size_mb:.1f} MB)")
+        _post_process(ds, data_dir)
         return True
 
-    # Also check post-process output
-    post = ds.get("post_process")
-    if post and _post_process_present(ds, data_dir, dest_path, post):
-        print("  ✓ already extracted")
+    if _post_output_present(ds, data_dir):
+        print("  ok already extracted")
         return True
 
-    # --- Attempt auto-download ---
-    urls = ds.get("urls", [])
-    if urls:
-        for url in urls:
-            if dest_path and _download(url, dest_path):
-                _post_process(ds, data_dir, dest_path)
-                return True
-            # try next mirror
-            print("  trying next source …")
+    # --- Fetch ---
+    ok = False
+    if ds.get("fetcher"):
+        ok = FETCHERS[ds["fetcher"]](dest_path, data_dir)
+    elif ds.get("urls"):
+        for url in ds["urls"]:
+            if _download(url, dest_path):
+                ok = True
+                break
+            print("  trying next source ...")
     else:
-        print("  ⚠ No direct download URL — requires manual steps.")
+        print("  ! No direct download URL - requires manual steps.")
+        print(f"\n  Manual URL: {ds['manual_url']}")
+        print(f"  {ds['manual_note']}")
+        return False
 
-    # --- Manual fallback ---
-    print(f"\n  Manual URL: {ds['manual_url']}")
-    print(f"  {ds['manual_note']}")
-    return False
-
-
-def _post_process_present(
-    ds: dict, data_dir: Path, dest_path: Path | None, post: str
-) -> bool:
-    """Check if post-processed output already exists."""
-    prefix = ds["dest"].rsplit(".", 1)[0] if ds["dest"] else ds.get("key", "")
-    extract_dir = data_dir / prefix
-    return extract_dir.is_dir() and any(extract_dir.iterdir())
+    if ok:
+        _post_process(ds, data_dir)
+    return ok
 
 
-def _post_process(ds: dict, data_dir: Path, dest_path: Path | None):
-    """Run post-processing (unzip etc.) if configured and not already done."""
-    if dest_path is None or not dest_path.exists():
+def _post_process(ds: dict, data_dir: Path):
+    """Run post-processing (extraction) if configured and not already done."""
+    if not ds.get("post_process"):
         return
-    post = ds.get("post_process")
-    if not post:
+    dest_path = data_dir / ds["dest"] if ds.get("dest") else None
+    if dest_path is not None and not dest_path.exists():
         return
-    prefix = ds["dest"].rsplit(".", 1)[0]
-    extract_dir = data_dir / prefix
-    if extract_dir.is_dir() and any(extract_dir.iterdir()):
-        return
-    extract_dir.mkdir(parents=True, exist_ok=True)
-    POST_PROCESSORS[post](dest_path, extract_dir)
+    POST_PROCESSORS[ds["post_process"]](dest_path, data_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -314,29 +397,27 @@ def interactive(data_dir: Path):
     """Step through each dataset with y/N prompts."""
     print(
         "\n"
-        "  Philippine Tidal Energy — Data Downloader\n"
-        "  ─────────────────────────────────────────\n"
+        "  Philippine Tidal Energy - Data Downloader\n"
+        "  -----------------------------------------\n"
     )
     print(f"  Output directory: {data_dir.resolve()}\n")
 
     acquired = {}
     for key, ds in DATASETS.items():
-        req = "required" if ds["required"] else "optional"
-        if ds["urls"]:
-            choice = (
-                input(f"  Download {ds['name']} ({req}, {ds['size_hint']})? [y/N]: ")
-                .strip()
-                .lower()
-            )
-        else:
-            print(f"\n  {ds['name']} ({req}) — manual download only.")
+        if ds.get("dest") is None:
+            print(f"\n  {ds['name']} - manual download only.")
             choice = input("  Show instructions? [Y/n]: ").strip().lower()
-            if choice == "" or choice == "y":
+            if choice in ("", "y"):
                 print(f"\n  Manual URL: {ds['manual_url']}")
                 print(f"  {ds['manual_note']}\n")
             acquired[key] = False
             continue
 
+        choice = (
+            input(f"  Download {ds['name']} ({ds['size_hint']})? [y/N]: ")
+            .strip()
+            .lower()
+        )
         if choice == "y":
             acquired[key] = download_dataset(key, data_dir)
         else:
@@ -347,10 +428,10 @@ def interactive(data_dir: Path):
 
 
 def auto_all(data_dir: Path):
-    """Download everything that has direct URLs."""
+    """Download everything that can be automated."""
     print(
         "\n"
-        "  Auto-downloading all datasets with direct URLs …\n"
+        "  Auto-downloading all datasets with direct URLs ...\n"
         f"  Output directory: {data_dir.resolve()}\n"
     )
 
@@ -362,17 +443,19 @@ def auto_all(data_dir: Path):
 
 
 def _print_summary(acquired: dict, data_dir: Path):
-    print(f"\n{'─' * 60}")
+    print(f"\n{'-' * 60}")
     print("  Summary\n")
     for key, ok in acquired.items():
         ds = DATASETS[key]
-        status = "✓" if ok else "✗ (see manual instructions above)"
-        print(f"  {status}  {ds['name']}")
+        status = "ok" if ok else "x (see manual instructions above)"
+        print(f"  {status:<8} {ds['name']}")
 
     print(f"\n  All downloads go to: {data_dir.resolve()}")
     print(
-        "  Update src/model/config.yaml to point bathymetry.path, "
-        "tidal_forcing.path, and land_shapefile to these locations.\n"
+        "  src/model/config.yaml already points at these files:\n"
+        "    bathymetry.path        -> data/gebco/gebco_2026_*.nc\n"
+        "    bathymetry.land_shapefile -> data/philippines_landmass.geojson\n"
+        "    tidal_forcing.path     -> data/GOT4.10c/grids_oceantide_netcdf/\n"
     )
 
 
@@ -394,22 +477,22 @@ def main():
     group.add_argument(
         "--all",
         action="store_true",
-        help="Download all datasets that have direct URLs",
+        help="Download all datasets that can be automated",
     )
     group.add_argument(
         "--gebco",
         action="store_true",
-        help="Download GEBCO 2024 bathymetry only",
+        help="Download the GEBCO 2026 bathymetry subset only",
     )
     group.add_argument(
-        "--shoreline",
+        "--landmask",
         action="store_true",
-        help="Download OSM + GADM shapefiles only",
+        help="Download the Philippines landmass GeoJSON only",
     )
     group.add_argument(
         "--tidal",
         action="store_true",
-        help="Show manual download instructions for FES2014 + TPXO9",
+        help="Download GOT4.10c and show manual steps for FES2014 + TPXO9",
     )
     parser.add_argument(
         "--force",
@@ -425,27 +508,15 @@ def main():
         auto_all(data_dir)
     elif args.gebco:
         download_dataset("gebco", data_dir, skip_existing=skip_existing)
-    elif args.shoreline:
-        download_dataset("osm_shoreline", data_dir, skip_existing=skip_existing)
-        download_dataset("gadm", data_dir, skip_existing=skip_existing)
+    elif args.landmask:
+        download_dataset("landmask", data_dir, skip_existing=skip_existing)
     elif args.tidal:
-        for key in ("fes2014", "tpxo9", "got"):
+        download_dataset("got", data_dir, skip_existing=skip_existing)
+        for key in ("fes2014", "tpxo9"):
             ds = DATASETS[key]
             print(f"\n  {ds['name']}\n")
             print(f"  Manual URL: {ds['manual_url']}")
             print(f"  {ds['manual_note']}")
-        print(
-            "\n  FES2014 directory structure:\n"
-            "    data/fes2014/\n"
-            "      M2_ocean.nc    M2_load.nc\n"
-            "      S2_ocean.nc    S2_load.nc\n"
-            "      K1_ocean.nc    K1_load.nc\n"
-            "      O1_ocean.nc    O1_load.nc\n"
-            "\n  TPXO9 file placement:\n"
-            "    data/tpxo9/h_tpxo9.v1.nc\n"
-            "\n  GOT4.10c file placement:\n"
-            "    data/got4.10c.tar.gz  (auto-extract with: tar xzf)\n"
-        )
     else:
         interactive(data_dir)
 

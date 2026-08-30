@@ -1,0 +1,96 @@
+# Tidal-OSS Documentation
+
+This directory holds the documentation for the Tidal-OSS project: a two-phase
+tidal-current energy assessment workflow for the Philippine archipelago, with a
+web-based marine spatial planning interface.
+
+The documentation is organised by topic:
+
+| Directory | Scope |
+|-----------|-------|
+| [`concepts/`](concepts/) | Scientific background: tidal physics, methodology, and resource interpretation |
+| [`architecture/`](architecture/) | System design, end-to-end workflow, and pipeline diagrams |
+| [`engines/`](engines/) | The two hydrodynamic engines and how their results are reconciled |
+| [`operations/`](operations/) | Running, troubleshooting, and verifying the system |
+| [`notebooks/`](notebooks/) | Runnable Jupyter walkthroughs and workshops |
+
+The root also contains `AGENTS.md` (canonical context for AI agents and
+contributors) and `plan.md` (implementation plan and milestones).
+
+> The `presentation/` subdirectory is excluded from this structure; it holds a
+> standalone slideshow and its assets.
+
+## Getting started
+
+- **[`architecture/ARCHITECTURE.md`](architecture/ARCHITECTURE.md)** — the
+  integrated technical guide: concepts, architecture, diagrams, code snippets,
+  outputs, and limitations. Start here for an overview.
+- **[`../README.md`](../README.md)** — quick start, configuration table, and
+  API endpoint summary.
+- **[`../src/README.md`](../src/README.md)** — dataset acquisition and
+  step-by-step setup for the model and web service.
+
+## Concepts
+
+| Page | Content |
+|------|---------|
+| [`concepts/MODEL.md`](concepts/MODEL.md) | Physics and methodology: tidal forcing, shallow-water equations, power density, friction, hotspot mechanics, and model limitations. |
+
+## Architecture
+
+| Page | Content |
+|------|---------|
+| [`architecture/ARCHITECTURE.md`](architecture/ARCHITECTURE.md) | Integrated technical guide: concepts, solution architecture, diagrams, canonical outputs, web API, code snippets, and representative outputs. |
+| [`architecture/WORKFLOW.md`](architecture/WORKFLOW.md) | Data flow from Python screening to TELEMAC-2D refinement and back to canonical web outputs. |
+| [`architecture/workflow.drawio`](architecture/workflow.drawio) | Editable diagram of the end-to-end pipeline. |
+
+## Engines
+
+| Page | Content |
+|------|---------|
+| [`engines/TELEMAC.md`](engines/TELEMAC.md) | TELEMAC-2D refinement backend: Docker execution, configuration, standing-wave caveats, and operation modes. |
+| [`engines/CASE_AUTHORING.md`](engines/CASE_AUTHORING.md) | Mesh, `.cli` / `.liq` / `.cas` conventions for authoring TELEMAC cases. |
+| [`engines/POSTPROCESSING.md`](engines/POSTPROCESSING.md) | Converting Selafin results into the canonical output products. |
+| [`engines/RECONCILIATION.md`](engines/RECONCILIATION.md) | Keeping TELEMAC refinements consistent with the Python screening (nesting, friction harmonisation, acceptance criteria). |
+
+## Operations
+
+| Page | Content |
+|------|---------|
+| [`operations/TROUBLESHOOTING.md`](operations/TROUBLESHOOTING.md) | Operational symptoms, likely causes, and fixes. |
+| [`operations/SCREENSHOTS.md`](operations/SCREENSHOTS.md) | End-to-end run walkthrough with exact commands and captured screen states. |
+
+## Notebooks
+
+| Page | Content |
+|------|---------|
+| [`notebooks/EXPLAINER.ipynb`](notebooks/EXPLAINER.ipynb) | Two-hour runnable workshop that unpacks every component of the model. |
+| [`notebooks/workshop.ipynb`](notebooks/workshop.ipynb) | Slide-deck notebook with live demos of the power field, solver, web API, and turbine curves. |
+
+## Workshop
+
+A consolidated, linear workshop series that guides you through the whole stack
+(setup → concept → data → workflow → model → web → consolidation). Each
+notebook ends pointing to the next.
+
+| Page | Content |
+|------|---------|
+| [`workshop/README.md`](workshop/README.md) | Series index and how to use it. |
+| [`workshop/0.setup.ipynb`](workshop/0.setup.ipynb) | Environment, install, and data setup. |
+| [`workshop/1.concept.ipynb`](workshop/1.concept.ipynb) | Tidal physics and the ½ρU³ resource law. |
+| [`workshop/2.data.ipynb`](workshop/2.data.ipynb) | Inputs, configuration, and the six canonical outputs. |
+| [`workshop/3.general-workflow.ipynb`](workshop/3.general-workflow.ipynb) | Screening → TELEMAC → web pipeline. |
+| [`workshop/4.model.ipynb`](workshop/4.model.ipynb) | Hands-on screening solver and output writers. |
+| [`workshop/5.web.ipynb`](workshop/5.web.ipynb) | Flask API, map, and turbine performance. |
+| [`workshop/6.consolidation.ipynb`](workshop/6.consolidation.ipynb) | Stack check, exercises, and further reading. |
+
+## Contribution notes
+
+- `AGENTS.md` is the canonical context for AI agents and contributors working
+  on this repository — read it before making changes.
+- `notebooks/EXPLAINER.ipynb` must remain runnable top-to-bottom; keep it in
+  sync with any model API changes.
+- `notebooks/workshop.ipynb` is generated by `scripts/generate_workshop.py`;
+  edit the generator, then regenerate the notebook.
+- The `workshop/` series is generated by `scripts/generate_workshop_series.py`;
+  edit the generator, then run `python3 scripts/generate_workshop_series.py`.
