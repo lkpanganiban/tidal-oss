@@ -16,8 +16,9 @@
 #      standing-wave node.  See docs/engines/TELEMAC.md "Standing-wave caveat".
 #
 # Run with:
-#   PYTHONPATH=src .venv/bin/python -m model.telemac pipeline \
-#       -c scripts/telemac_strait_config.yaml --hotspots scripts/surigao_hotspots.geojson
+#   PYTHONPATH=src .venv/bin/python -m model.telemac \
+#       --config scripts/telemac_strait_config.yaml \
+#       pipeline --hotspots scripts/surigao_hotspots.geojson
 
 domain:
   lon_min: 116.0
@@ -28,7 +29,7 @@ domain:
 
 bathymetry:
   source: gebco
-  path: data/GEBCO_27_Aug_2026_0805e9b79dd8/gebco_2026_n22.0_s4.0_w112.0_e128.0.nc
+  path: data/GEBCO_28_Aug_2026_0bcab7925fa2/gebco_2026_n22.0_s4.0_w112.0_e128.0.nc
   min_depth: 2.0
   max_depth: 6000.0
   land_shapefile: data/philippines_landmass.geojson
@@ -107,7 +108,8 @@ telemac2d:
     duration_days: 2
     variables: ['ELEVATION Z', 'VELOCITY U', 'VELOCITY V']
     friction_law: 2
-    friction_coefficient: 40.0
+    # Chezy C = sqrt(g/cd) — harmonised with the screening cd=0.0025 (default 62.6)
+    friction_coefficient: 62.6
     linear_friction_coefficient: null
     advection: false
   postprocess:

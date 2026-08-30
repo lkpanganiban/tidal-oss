@@ -65,11 +65,14 @@ def prepare_case(
     os.makedirs(case_dir, exist_ok=True)
 
     mesh_source = mesh_cfg.get("source", "generated")
-    # Strait-aware edges: the region clustering decides which box edges carry
-    # the tide (perpendicular to the channel axis); fall back to the config.
-    edge_types = getattr(region, "edge_types", None) or mesh_cfg.get(
-        "boundary", {}
-    ).get("edge_types")
+    # Strait-aware edges: the region clustering derives the box edges that
+    # carry the tide (perpendicular to the channel axis) UNLESS the config
+    # explicitly pins them (telemac2d.mesh.boundary.edge_types).
+    edge_types = (
+        mesh_cfg.get("boundary", {}).get("edge_types")
+        or getattr(region, "edge_types", None)
+        or None
+    )
     if mesh_source == "supplied":
         if supplied_mesh is None:
             raise ValueError(
@@ -172,9 +175,10 @@ def prepare_case(
         edge_types=edge_types,
         liquid_nodes_file=mesh_cfg.get("boundary", {}).get("liquid_nodes_file"),
         # The propagation ramp (harmonic fallback only) must run along the
-        # channel axis: NS regions force through-flow south->north, EW
-        # regions west->east.
-        propagation_axis="lat" if getattr(region, "axis", "EW") == "NS" else "lon",
+        # channel axis: explicit config propagation_axis wins, otherwise NS
+        # regions force through-flow south->north, EW regions west->east.
+        propagation_axis=mesh_cfg.get("boundary", {}).get("propagation_axis")
+        or ("lat" if getattr(region, "axis", "EW") == "NS" else "lon"),
         parent_nc=parent_nc,
         parent_grid=grid,
         thompson=thompson,

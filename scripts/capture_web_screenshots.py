@@ -115,8 +115,7 @@ async def main():
         for name in ["speed", "depth", "distance"]:
             await page.evaluate(
                 f"""() => {{
-                    const rows = [...document.querySelectorAll('#layer-list .layer-row')];
-                    const row = rows.find(r => r.textContent.includes('{name}'));
+                    const row = document.querySelector('#layer-list .layer-row[data-layer="{name}"]');
                     if (row) {{ const cb = row.querySelector('input[type=checkbox]'); if (cb && !cb.checked) cb.click(); }}
                 }}"""
             )

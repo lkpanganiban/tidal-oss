@@ -720,6 +720,7 @@ function initMap() {
     zoom: 9,
     minZoom: 4,
     maxZoom: 16,
+    doubleClickZoom: false,          // let the app's own dblclick handler finish a draw
     style: { version: 8, sources: {}, layers: [] },
   });
   map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'top-left');
@@ -737,7 +738,15 @@ function initMap() {
     if (measureMode) { addMeasurePoint(e.lngLat); return; }
     inspectPoint(e.lngLat);
   });
-  map.on('dblclick', (e) => { if (state.drawMode) { e.preventDefault(); finishAreaDraw(); } });
+  map.on('dblclick', (e) => {
+    if (state.drawMode) {
+      e.preventDefault();
+      // The two clicks that make up the double-click each appended a vertex;
+      // drop them before finishing the area.
+      state.drawPoints = state.drawPoints.slice(0, Math.max(0, state.drawPoints.length - 2));
+      finishAreaDraw();
+    }
+  });
   map.on('contextmenu', (e) => {
     if (state.drawMode) { e.preventDefault(); stopAreaDraw(); }
   });
@@ -812,6 +821,7 @@ function buildLayerManager(metaByLayer) {
     }
     state.layers[name] = { visible: name === 'power', opacity: 0.75, meta };
     row.className = 'layer-row';
+    row.dataset.layer = name;
     row.innerHTML = `<span class="swatch" style="background:${SWATCHES[name]}"></span>
       <span class="lname">${meta.label}</span>
       <span class="lunits">${meta.units}</span>
@@ -860,12 +870,9 @@ function addLayerSource(name, meta) {
     paint: { 'raster-opacity': state.layers[name].opacity },
     layout: { visibility: state.layers[name].visible ? 'visible' : 'none' },
   });
-  map.on('click', layerId(name), (e) => {
-    if (!state.drawMode) inspectPoint(e.lngLat);
-  });
-  map.on('mousemove', layerId(name), () => {
-    map.getCanvas().style.cursor = state.drawMode ? 'crosshair' : 'pointer';
-  });
+  // No per-layer click/mousemove handlers: the single map-level handlers
+  // registered in initMap() dispatch inspection, so clicks never fire twice
+  // and listeners don't accumulate across dataset switches.
 }
 
 function toggleLayer(name, visible) {
@@ -930,6 +937,7 @@ async function loadTimeseries(lat, lng) {
     const r = await fetch(`${API}/timeseries?lat=${lat.toFixed(5)}&lon=${lng.toFixed(5)}${regionParam('&')}`);
     if (!r.ok) {
       $('chart-wrap').style.display = 'none';
+      state.tsPoint = null;
       return;
     }
     const d = await r.json();
@@ -938,6 +946,7 @@ async function loadTimeseries(lat, lng) {
     renderChart(d);
   } catch (e) {
     $('chart-wrap').style.display = 'none';
+    state.tsPoint = null;
   }
 }
 
@@ -982,6 +991,12 @@ async function loadTurbineSpecs() {
       .map((t) => `<option value="${t.id}">${t.name} — ${fmt(t.rated_power_kw, 0)} kW (${t.manufacturer})</option>`)
       .join('');
     sel.addEventListener('change', () => { if (state.turbinePerf) renderTurbine(); });
+    // If performance data arrived before the specs, render immediately —
+    // populating the <select> does not fire a 'change' event.
+    if (state.turbinePerf) {
+      if (!sel.value) sel.value = state.turbineSpecs[0].id;
+      renderTurbine();
+    }
   } catch (e) { /* API unavailable — panel stays empty */ }
 }
 
@@ -1147,7 +1162,7 @@ function updateMeasureLayer() {
 }
 
 function finishAreaDraw() {
-  if (state.drawPoints.length < 3) { toast('Draw at least 3 points', true); return; }
+  if (state.drawPoints.length < 3) { toast('Draw at least 3 points', true); stopAreaDraw(); return; }
   state.drawMode = false;
   $('btn-draw').classList.remove('active');
   $('drawbanner').classList.remove('visible');
@@ -1245,12 +1260,9 @@ function renderHotspots() {
       'circle-opacity': 0.85, 'circle-stroke-color': '#0b0e14', 'circle-stroke-width': 1,
     },
   });
-  map.on('click', 'hot-pts', (e) => {
-    const f = e.features[0];
-    inspectPoint({ lng: f.geometry.coordinates[0], lat: f.geometry.coordinates[1] });
-  });
-  map.on('mouseenter', 'hot-pts', () => map.getCanvas().style.cursor = 'pointer');
-  map.on('mouseleave', 'hot-pts', () => map.getCanvas().style.cursor = '');
+  // No per-layer click/mouseenter/mouseleave handlers here: the map-level
+  // click handler in initMap() inspects the site, so re-rendering hotspots
+  // across dataset switches can't accumulate duplicate listeners.
 
   // Top-10 list
   const top = state.hotspots.slice(0, 10);
@@ -1283,11 +1295,11 @@ function bindResourceFilters() {
   const fmp = $('f-minpower'), fdm = $('f-depth-min'), fdx = $('f-depth-max'), fe = $('f-eff');
   const refresh = () => {
     const mp = parseInt(fmp.value), dmin = parseInt(fdm.value), dmax = parseInt(fdx.value), eff = parseInt(fe.value);
+    // keep min <= max
+    if (dmin > dmax) { dmax = dmin; fdx.value = dmin; }
     $('f-minpower-v').textContent = mp + ' W/m²';
     $('f-depth-v').textContent = dmin + '–' + dmax + ' m';
     $('f-eff-v').textContent = eff + '%';
-    // keep min <= max
-    if (dmin > dmax) { dmax = dmin; fdx.value = dmin; }
     clearTimeout(resourceTimer);
     resourceTimer = setTimeout(() => fetchResource(mp, dmin, dmax, eff), 350);
   };
@@ -1397,12 +1409,19 @@ function clearDataLayers() {
   });
   if (state.map.getSource('hot-src')) state.map.removeSource('hot-src');
   state.hotspots = [];
+  // Reset per-dataset state so stale UI (legend, chart labels, exports) never
+  // references the previous dataset.
+  state.activeLayer = 'power';
+  state.tsPoint = null;
+  state.areaLast = null;
+  if ($('export-area')) $('export-area').disabled = true;
 }
 
 async function loadDataset(region) {
   state.region = region || '';
   try {
     const r = await fetch(API + '/layers' + regionParam('?'));
+    if (!r.ok) throw new Error('layers API returned ' + r.status);
     const data = await r.json();
     clearDataLayers();
     buildLayerManager(data.layers);

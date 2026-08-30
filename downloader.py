@@ -65,7 +65,8 @@ DATASETS: dict[str, dict] = {
     "gebco": {
         "name": "GEBCO 2026 bathymetry (Philippines subset)",
         "size_hint": "~64 MB (NetCDF, 15 arc-sec)",
-        "dest": "gebco/gebco_2026_n22.0_s4.0_w112.0_e128.0.nc",
+        # Written to the same location src/model/config.yaml points at.
+        "dest": "GEBCO_28_Aug_2026_0bcab7925fa2/gebco_2026_n22.0_s4.0_w112.0_e128.0.nc",
         "fetcher": "gebco_subset",
         "manual_url": GEBCO_COG_URL,
         "manual_note": (
@@ -453,7 +454,7 @@ def _print_summary(acquired: dict, data_dir: Path):
     print(f"\n  All downloads go to: {data_dir.resolve()}")
     print(
         "  src/model/config.yaml already points at these files:\n"
-        "    bathymetry.path        -> data/gebco/gebco_2026_*.nc\n"
+        "    bathymetry.path        -> data/GEBCO_28_Aug_2026_0bcab7925fa2/gebco_2026_*.nc\n"
         "    bathymetry.land_shapefile -> data/philippines_landmass.geojson\n"
         "    tidal_forcing.path     -> data/GOT4.10c/grids_oceantide_netcdf/\n"
     )

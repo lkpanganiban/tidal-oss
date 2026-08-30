@@ -10,7 +10,7 @@ domain:
 
 bathymetry:
   source: gebco                 # gebco | file
-  path: data/gebco/gebco_2026_n22.0_s4.0_w112.0_e128.0.nc
+  path: data/GEBCO_28_Aug_2026_0bcab7925fa2/gebco_2026_n22.0_s4.0_w112.0_e128.0.nc
   min_depth: 2.0                # enforce minimum depth [m]
   max_depth: 6000.0             # clip unrealistic depths
   land_shapefile: data/philippines_landmass.geojson
@@ -71,14 +71,14 @@ telemac2d:
                                         # with the nationwide view); gebco = native GEBCO
                                         # sampling (finer detail, diverges from the parent)
     boundary:
-      edge_types:                       # fallback only — regions set liquid edges
-        left: liquid                    # perpendicular to their channel axis
-        right: liquid
-        top: solid
-        bottom: solid
+      edge_types: null                      # null = derive from the region's channel
+                                            # axis (liquid edges perpendicular to the
+                                            # strait).  Set explicitly to pin the open
+                                            # edges (e.g. telemac_strait_config.yaml).
       phase_speed_mps: 20.0             # tidal phase speed [m/s]; imposes a propagating
                                         # tide (through-flow) instead of a standing wave
-      propagation_axis: lon             # direction the boundary tide travels
+      propagation_axis: null               # null = follow the effective edge_types
+                                            # (left/right liquid -> lon, top/bottom -> lat)
       cluster_radius_km: 15.0          # hotspot clustering radius
       margin_km: 10.0                  # buffer added around each cluster
       channel_buffer_km: 10.0          # extra reach along the channel axis so the
