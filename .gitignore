@@ -26,6 +26,3 @@ build/
 
 # --- GeoTIFF aux ---
 *.tif.aux.xml
-
-# --- Generated workshop site (rebuild with scripts/build_workshop_website.py) ---
-docs/workshop/site/
