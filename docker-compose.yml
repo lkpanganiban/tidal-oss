@@ -1,3 +1,8 @@
+# Tidal web visualisation — single-service compose.
+#
+#   docker compose up -d          # Flask + MapLibre map
+#   docker compose build          # rebuild after code changes
+
 services:
   tidal-web:
     build:
@@ -6,7 +11,7 @@ services:
     image: tidal-model:latest
     container_name: tidal-web
     ports:
-      - "5000:5000"
+      - "8001:5000"
     volumes:
       - ./output:/output
     environment:

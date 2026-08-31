@@ -3,7 +3,7 @@
 This document summarises the implementation plan for the open-source
 Philippine tidal-current energy assessment workflow.  See
 [`README.md`](../README.md) for quick start and
-[`MODEL.md`](MODEL.md) for the physics and methodology.
+[`concepts/MODEL.md`](concepts/MODEL.md) for the physics and methodology.
 
 ## Two-phase workflow
 
@@ -34,8 +34,11 @@ Phase A: Screening                                Phase B: Web Visualization
    - MapLibre GL JS frontend with an interactive overlay, measurement tools,
      and statistics panel.
 
-3. **Refinement (future)** — TELEMAC-2D finite-element modelling of the
-   top hotspots at higher resolution, driven by the screening results.
+3. **Refinement (Phase C)** — TELEMAC-2D finite-element modelling of the top
+   hotspots at higher resolution, driven by the screening results and run
+   inside a public Docker image. See `engines/TELEMAC.md`,
+   `architecture/WORKFLOW.md`, `engines/CASE_AUTHORING.md`,
+   `engines/POSTPROCESSING.md`, `operations/TROUBLESHOOTING.md`.
 
 ## Milestones
 
@@ -45,6 +48,6 @@ Phase A: Screening                                Phase B: Web Visualization
 - [x] Output writers: NetCDF, COG GeoTIFF, hotspot GeoJSON
 - [x] Flask + MapLibre web service with tile/query/download endpoints
 - [x] Validation suite (seiche period, M2 channel, mass conservation)
-- [ ] TELEMAC-2D refinement workflow
+- [x] TELEMAC-2D refinement workflow (screening → cluster → mesh → run in Docker → post-process)
 - [ ] Real-time tidal forecasting via live boundary feeds
 - [ ] Economic site-screening module (depth filter, distance-to-grid)

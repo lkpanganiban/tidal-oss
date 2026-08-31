@@ -1,5 +1,5 @@
 # --- Model runtime dependencies (2D shallow-water screening model) ---
-numpy>=1.24
+numpy>=2.0
 scipy>=1.10
 xarray>=2023.1
 pyyaml>=6.0

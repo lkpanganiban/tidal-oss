@@ -13,6 +13,8 @@ import numpy as np
 import xarray as xr
 from scipy.interpolate import RegularGridInterpolator
 
+from .utils import find_coord
+
 
 def load_gebco(
     path: str,
@@ -41,8 +43,8 @@ def load_gebco(
     """
     ds = xr.open_dataset(path, decode_times=False)
 
-    lon_var = _find_coord(ds, ["lon", "longitude", "x"])
-    lat_var = _find_coord(ds, ["lat", "latitude", "y"])
+    lon_var = find_coord(ds, ["lon", "longitude", "x"])
+    lat_var = find_coord(ds, ["lat", "latitude", "y"])
     elev_var = _find_data_var(ds)
 
     lon = ds[lon_var].values.astype(np.float64)
@@ -169,7 +171,6 @@ def build_land_mask(
     """
     import fiona
     from affine import Affine
-    from rasterio.features import rasterize
 
     if not Path(land_shapefile_path).exists():
         raise FileNotFoundError(f"Shapefile not found: {land_shapefile_path}")
@@ -192,15 +193,23 @@ def build_land_mask(
             )
         geoms = [(feat["geometry"], 1) for feat in src]
 
-    rasterised = rasterize(
+    rasterised = _rasterise_land_geoms(geoms, (ny, nx), transform)
+
+    return rasterised[::-1, :].astype(bool)
+
+
+def _rasterise_land_geoms(geoms, out_shape, transform, *, all_touched: bool = False):
+    """Burn polygon interiors onto an ``(ny, nx)`` uint8 array (1 = land)."""
+    from rasterio.features import rasterize
+
+    return rasterize(
         geoms,
-        out_shape=(ny, nx),
+        out_shape=out_shape,
         transform=transform,
         fill=0,
         dtype="uint8",
+        all_touched=all_touched,
     )
-
-    return rasterised[::-1, :].astype(bool)
 
 
 def _is_geographic(crs) -> bool:
@@ -221,13 +230,6 @@ def _is_geographic(crs) -> bool:
     no_defs = d.get("no_defs", False)
     proj = d.get("proj", "").lower()
     return proj in ("longlat", "latlong") and not no_defs
-
-
-def _find_coord(ds: xr.Dataset, candidates: list[str]) -> str:
-    for name in candidates:
-        if name in ds.coords or name in ds.dims:
-            return name
-    raise KeyError(f"No coordinate found among {candidates} in dataset.")
 
 
 def _find_data_var(ds: xr.Dataset) -> str:

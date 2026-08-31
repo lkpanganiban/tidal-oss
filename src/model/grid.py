@@ -11,7 +11,7 @@ import dataclasses
 
 import numpy as np
 
-from .utils import coriolis, interpolate_to_u, interpolate_to_v
+from .utils import coriolis, haversine_distance_m, interpolate_to_u, interpolate_to_v
 
 
 @dataclasses.dataclass
@@ -162,15 +162,15 @@ class StructuredGrid:
         open_boundary[:, 0] = mask[:, 0]
         open_boundary[:, -1] = mask[:, -1]
 
-        f_arr = coriolis(lat_2d)
+        f_arr = np.asarray(coriolis(lat_2d), dtype=np.float64)
 
         h_u = interpolate_to_u(h)
         h_v = interpolate_to_v(h)
         mask_u = _build_u_mask(mask)
         mask_v = _build_v_mask(mask)
 
-        dy_metres = _haversine_distance(lat_1d[0], lon_1d[0], lat_1d[-1], lon_1d[0])
-        dx_metres = _haversine_distance(lat_1d[0], lon_1d[0], lat_1d[0], lon_1d[-1])
+        dy_metres = haversine_distance_m(lat_1d[0], lon_1d[0], lat_1d[-1], lon_1d[0])
+        dx_metres = haversine_distance_m(lat_1d[0], lon_1d[0], lat_1d[0], lon_1d[-1])
         dy_avg = dy_metres / (ny - 1) if ny > 1 else dy_metres
         dx_avg = dx_metres / (nx - 1) if nx > 1 else dx_metres
 
@@ -263,15 +263,3 @@ def _build_v_mask(eta_mask: np.ndarray) -> np.ndarray:
     mask_v[0, :] = eta_mask[0, :]
     mask_v[ny, :] = eta_mask[ny - 1, :]
     return mask_v
-
-
-def _haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """Distance in metres between two lat/lon points (Haversine formula)."""
-    R = 6371000.0
-    dlat = np.deg2rad(lat2 - lat1)
-    dlon = np.deg2rad(lon2 - lon1)
-    a = (
-        np.sin(dlat / 2) ** 2
-        + np.cos(np.deg2rad(lat1)) * np.cos(np.deg2rad(lat2)) * np.sin(dlon / 2) ** 2
-    )
-    return R * 2.0 * np.arctan2(np.sqrt(a), np.sqrt(1 - a))

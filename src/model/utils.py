@@ -4,17 +4,7 @@ Provides Coriolis parameter, stability criteria, array indexing helpers,
 and interpolation routines used across the model package.
 """
 
-from typing import overload
-
 import numpy as np
-
-
-@overload
-def coriolis(lat: np.ndarray) -> np.ndarray: ...
-
-
-@overload
-def coriolis(lat: float) -> float: ...
 
 
 def coriolis(lat: np.ndarray | float) -> np.ndarray | float:
@@ -140,3 +130,23 @@ def power_density(u: np.ndarray, v: np.ndarray, rho: float = 1025.0) -> np.ndarr
     """
     s = speed(u, v)
     return 0.5 * rho * s**3
+
+
+def haversine_distance_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Great-circle distance in metres between two lon/lat points (Haversine)."""
+    r = 6371000.0
+    dlat = np.deg2rad(lat2 - lat1)
+    dlon = np.deg2rad(lon2 - lon1)
+    a = (
+        np.sin(dlat / 2) ** 2
+        + np.cos(np.deg2rad(lat1)) * np.cos(np.deg2rad(lat2)) * np.sin(dlon / 2) ** 2
+    )
+    return float(r * 2.0 * np.arctan2(np.sqrt(a), np.sqrt(1 - a)))
+
+
+def find_coord(ds, candidates: list[str]) -> str:
+    """Return the first dataset coordinate/dimension name in *candidates*."""
+    for name in candidates:
+        if name in ds.coords or name in ds.dims:
+            return name
+    raise KeyError(f"No coordinate found among {candidates} in dataset.")

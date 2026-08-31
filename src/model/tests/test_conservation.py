@@ -2,10 +2,6 @@
 
 import warnings
 
-warnings.filterwarnings(
-    "ignore", message="numpy.ndarray size changed, may indicate binary incompatibility"
-)
-
 import numpy as np
 
 try:
@@ -15,6 +11,10 @@ except ImportError:
 
 from model.grid import StructuredGrid
 from model.solver import ShallowWaterSolver
+
+warnings.filterwarnings(
+    "ignore", message="numpy.ndarray size changed, may indicate binary incompatibility"
+)
 
 
 def test_mass_conservation_closed_basin():

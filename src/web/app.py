@@ -138,19 +138,68 @@ LAYERS: dict[str, dict] = {
 }
 
 
-def _layer_path(layer: str) -> str:
-    """Absolute path of a layer's GeoTIFF (siblings of the power file)."""
-    if layer == "power":
-        return GEOTIFF_PATH
-    return os.path.join(os.path.dirname(GEOTIFF_PATH), LAYERS[layer]["file"])
+# Allow per-layer value-range overrides via environment variables
+# (e.g. TIDAL_POWER_VMAX=1.0) so low-amplitude refinement outputs stay
+# legible.  Defaults are unchanged when the variables are unset.
+for _name in LAYERS:
+    _env_vmax = os.environ.get(f"TIDAL_{_name.upper()}_VMAX")
+    if _env_vmax:
+        try:
+            LAYERS[_name]["vmax"] = float(_env_vmax)
+        except ValueError:
+            logger.warning(
+                "Ignoring invalid TIDAL_%s_VMAX=%s", _name.upper(), _env_vmax
+            )
 
 
-def _results_nc_path() -> str:
-    return os.path.join(os.path.dirname(GEOTIFF_PATH), "results.nc")
+def _resolve_root(region: str | None) -> str:
+    """Directory holding a dataset's outputs.
+
+    With no region the Python screening outputs in ``OUTPUT_DIR`` are used;
+    otherwise the per-region TELEMAC-2D refinement under
+    ``OUTPUT_DIR/telemac/<region>/`` is used (when it exists).
+    """
+    if region:
+        cand = os.path.join(OUTPUT_DIR, "telemac", region)
+        if os.path.isdir(cand):
+            return cand
+    return os.path.dirname(GEOTIFF_PATH)
 
 
-def _hotspots_path() -> str:
-    return os.path.join(os.path.dirname(GEOTIFF_PATH), "hotspots.geojson")
+def _layer_path(layer: str, region: str | None = None) -> str:
+    """Absolute path of a layer's GeoTIFF within the selected dataset."""
+    return os.path.join(_resolve_root(region), LAYERS[layer]["file"])
+
+
+def _results_nc_path(region: str | None = None) -> str:
+    return os.path.join(_resolve_root(region), "results.nc")
+
+
+def _hotspots_path(region: str | None = None) -> str:
+    return os.path.join(_resolve_root(region), "hotspots.geojson")
+
+
+def _bounds_dict(src) -> dict:
+    """Bounding box (EPSG:4326) of an open raster source as a dict."""
+    from rasterio.warp import transform_bounds
+
+    b = src.bounds
+    if src.crs is not None and src.crs.to_epsg() != 4326:
+        bb = transform_bounds(src.crs, "EPSG:4326", b.left, b.bottom, b.right, b.top)
+    else:
+        bb = (b.left, b.bottom, b.right, b.top)
+    return {"west": bb[0], "south": bb[1], "east": bb[2], "north": bb[3]}
+
+
+def _root_bounds(root: str) -> dict | None:
+    """Bounding box (EPSG:4326) of a dataset's power raster, or None."""
+    src = _open_raster(os.path.join(root, LAYERS["power"]["file"]))
+    if src is None:
+        return None
+    try:
+        return _bounds_dict(src)
+    finally:
+        src.close()
 
 
 # ---------------------------------------------------------------------------
@@ -180,10 +229,10 @@ def _file_mtime(path: str) -> float:
 
 @lru_cache(maxsize=1024)
 def _render_tile_cached(
-    layer: str, z: int, x: int, y: int, mtime: float
+    layer: str, z: int, x: int, y: int, mtime: float, region: str | None = None
 ) -> bytes | None:
     """Render a tile to PNG bytes, cached keyed on (layer, z, x, y, mtime)."""
-    path = _layer_path(layer)
+    path = _layer_path(layer, region)
     src = _open_raster(path)
     if src is None:
         return None
@@ -204,20 +253,34 @@ def _render_tile(src, z: int, x: int, y: int, layer: str) -> io.BytesIO | None:
         logger.error("Pillow not installed")
         return None
 
-    from rasterio.warp import transform_bounds
+    from rasterio.enums import Resampling
+    from rasterio.transform import from_bounds
+    from rasterio.warp import reproject, transform_bounds
 
     west = x / (1 << z) * 360.0 - 180.0
     east = (x + 1) / (1 << z) * 360.0 - 180.0
     north = _mercator_to_lat(np.pi * (1.0 - 2.0 * y / (1 << z)))
     south = _mercator_to_lat(np.pi * (1.0 - 2.0 * (y + 1) / (1 << z)))
 
-    bbox_src_crs = transform_bounds("EPSG:4326", src.crs, west, south, east, north)
-    window = src.window(*bbox_src_crs)
-
-    if window.width < 1 or window.height < 1:
-        return None
-
-    data = src.read(1, window=window, out_shape=(TILE_SIZE, TILE_SIZE))
+    # Reproject into the complete Web-Mercator tile. Reading only the source
+    # intersection and resizing it to 256x256 stretches small rasters across
+    # the whole tile, misaligning them with GeoJSON overlays.
+    west_m, south_m, east_m, north_m = transform_bounds(
+        "EPSG:4326", "EPSG:3857", west, south, east, north
+    )
+    dst_transform = from_bounds(west_m, south_m, east_m, north_m, TILE_SIZE, TILE_SIZE)
+    data = np.full((TILE_SIZE, TILE_SIZE), np.nan, dtype=np.float32)
+    reproject(
+        source=src.read(1),
+        destination=data,
+        src_transform=src.transform,
+        src_crs=src.crs,
+        src_nodata=src.nodata if src.nodata is not None else np.nan,
+        dst_transform=dst_transform,
+        dst_crs="EPSG:3857",
+        dst_nodata=np.nan,
+        resampling=Resampling.bilinear,
+    )
     data = np.ma.masked_invalid(data)
 
     if data.mask.all():
@@ -272,29 +335,15 @@ def _mercator_to_lat(y: float) -> float:
     return np.rad2deg(2.0 * np.arctan(np.exp(y)) - np.pi / 2.0)
 
 
-def _layer_metadata(layer: str) -> dict | None:
+def _layer_metadata(layer: str, region: str | None = None) -> dict | None:
     """Per-layer metadata dict, or None when the file is unavailable."""
     meta = LAYERS[layer]
-    path = _layer_path(layer)
+    path = _layer_path(layer, region)
     src = _open_raster(path)
     if src is None:
         return None
     try:
-        from rasterio.warp import transform_bounds
-
-        bounds = src.bounds
-        if src.crs is not None and src.crs.to_epsg() != 4326:
-            bbox_4326 = transform_bounds(
-                src.crs,
-                "EPSG:4326",
-                bounds.left,
-                bounds.bottom,
-                bounds.right,
-                bounds.top,
-            )
-        else:
-            bbox_4326 = (bounds.left, bounds.bottom, bounds.right, bounds.top)
-
+        bounds = _bounds_dict(src)
         stats = _raster_stats(src)
     finally:
         src.close()
@@ -304,12 +353,7 @@ def _layer_metadata(layer: str) -> dict | None:
         "label": meta["label"],
         "units": meta["units"],
         "description": meta["description"],
-        "bounds": {
-            "west": bbox_4326[0],
-            "south": bbox_4326[1],
-            "east": bbox_4326[2],
-            "north": bbox_4326[3],
-        },
+        "bounds": bounds,
         "crs": "EPSG:4326",
         "stats": stats,
         "vmin": meta["vmin"],
@@ -332,9 +376,11 @@ def _raster_stats(src) -> dict:
     }
 
 
-def _point_query(lat: float, lon: float, layer: str = "power") -> dict | None:
+def _point_query(
+    lat: float, lon: float, layer: str = "power", region: str | None = None
+) -> dict | None:
     """Query a raster layer at a geographic point."""
-    path = _layer_path(layer)
+    path = _layer_path(layer, region)
     src = _open_raster(path)
     if src is None:
         return None
@@ -379,10 +425,10 @@ def _cell_area_m2(lat_deg: float, res_deg_x: float, res_deg_y: float) -> float:
 
 
 def _read_layer_array(
-    layer: str,
+    layer: str, region: str | None = None
 ) -> tuple[np.ndarray | None, Any, int, int]:
     """Read a layer as (array, transform, width, height) or (None, ...) if missing."""
-    path = _layer_path(layer)
+    path = _layer_path(layer, region)
     src = _open_raster(path)
     if src is None:
         return None, 0.0, 0, 0
@@ -397,40 +443,17 @@ def _read_layer_array(
 # ---------------------------------------------------------------------------
 
 
-def _resource_totals(
-    min_power: float,
-    depth_min: float | None,
-    depth_max: float | None,
-    efficiency: float,
-) -> dict | None:
-    """Aggregate resource statistics over the filtered domain."""
-    power, transform, w, h = _read_layer_array("power")
-    if power is None:
-        return None
+def _resource_summary(
+    mask: np.ndarray, power: np.ndarray, transform, efficiency: float
+) -> dict:
+    """Aggregate resource statistics for the cells selected by *mask*.
 
-    valid = ~(np.isnan(power) | (power <= 0))
-    mask = valid & (power >= min_power)
-
-    depth = None
-    if depth_min is not None or depth_max is not None:
-        depth, _, _, _ = _read_layer_array("depth")
-        if depth is not None:
-            if depth_min is not None:
-                mask &= depth >= depth_min
-            if depth_max is not None:
-                mask &= depth <= depth_max
-
+    Shared by :func:`_resource_totals` and :func:`_area_stats`: cell count,
+    area (cos(lat)-corrected), mean/max/p95 power density, and gross /
+    extractable / annual energy.  Callers guard the empty-mask case themselves
+    and may add layer-specific fields (e.g. ``depth_range_m``).
+    """
     n = int(mask.sum())
-    if n == 0:
-        return {
-            "n_cells": 0,
-            "area_km2": 0.0,
-            "mean_power_density": 0.0,
-            "gross_mw": 0.0,
-            "extractable_mw": 0.0,
-            "aep_gwh_yr": 0.0,
-        }
-
     res_x = transform.a
     res_y = -transform.e
 
@@ -456,6 +479,43 @@ def _resource_totals(
     }
 
 
+def _resource_totals(
+    min_power: float,
+    depth_min: float | None,
+    depth_max: float | None,
+    efficiency: float,
+    region: str | None = None,
+) -> dict | None:
+    """Aggregate resource statistics over the filtered domain."""
+    power, transform, w, h = _read_layer_array("power", region)
+    if power is None:
+        return None
+
+    valid = ~(np.isnan(power) | (power <= 0))
+    mask = valid & (power >= min_power)
+
+    depth = None
+    if depth_min is not None or depth_max is not None:
+        depth, _, _, _ = _read_layer_array("depth", region)
+        if depth is not None:
+            if depth_min is not None:
+                mask &= depth >= depth_min
+            if depth_max is not None:
+                mask &= depth <= depth_max
+
+    if int(mask.sum()) == 0:
+        return {
+            "n_cells": 0,
+            "area_km2": 0.0,
+            "mean_power_density": 0.0,
+            "gross_mw": 0.0,
+            "extractable_mw": 0.0,
+            "aep_gwh_yr": 0.0,
+        }
+
+    return _resource_summary(mask, power, transform, efficiency)
+
+
 @lru_cache(maxsize=64)
 def _resource_cached(
     min_power: float,
@@ -463,20 +523,25 @@ def _resource_cached(
     depth_max: float,
     efficiency: float,
     mtime: float,
+    region: str | None = None,
 ) -> dict | None:
-    return _resource_totals(min_power, depth_min or None, depth_max or None, efficiency)
+    return _resource_totals(
+        min_power, depth_min or None, depth_max or None, efficiency, region
+    )
 
 
-def _area_stats(polygon: list[list[float]], efficiency: float) -> dict | None:
+def _area_stats(
+    polygon: list[list[float]], efficiency: float, region: str | None = None
+) -> dict | None:
     """Statistics for cells inside a polygon (GeoJSON ring of [lon, lat])."""
-    power, transform, w, h = _read_layer_array("power")
+    power, transform, w, h = _read_layer_array("power", region)
     if power is None:
         return None
 
     from rasterio.features import geometry_mask
     from rasterio.warp import transform_geom
 
-    src = _open_raster(_layer_path("power"))
+    src = _open_raster(_layer_path("power", region))
     if src is None:
         return None
     try:
@@ -493,11 +558,7 @@ def _area_stats(polygon: list[list[float]], efficiency: float) -> dict | None:
     valid = ~(np.isnan(power) | (power <= 0))
     mask = inside & valid
 
-    n = int(mask.sum())
-    res_x = transform.a
-    res_y = -transform.e
-    rows, cols = np.where(mask)
-    if n == 0:
+    if int(mask.sum()) == 0:
         return {
             "n_cells": 0,
             "area_km2": 0.0,
@@ -506,45 +567,36 @@ def _area_stats(polygon: list[list[float]], efficiency: float) -> dict | None:
             "extractable_mw": 0.0,
             "aep_gwh_yr": 0.0,
         }
-    lat_c = transform.f + (rows + 0.5) * transform.e
-    cell_area = _cell_area_m2(float(np.mean(lat_c)), res_x, res_y)
 
-    sel = power[mask]
-    area_m2 = n * cell_area
-    gross_w = float(np.sum(sel) * cell_area)
+    summary = _resource_summary(mask, power, transform, efficiency)
+    summary["area_km2"] = round(summary["area_km2"], 3)
 
     # Depth range inside the polygon (when available)
     depth_range = None
-    depth, _, _, _ = _read_layer_array("depth")
+    depth, _, _, _ = _read_layer_array("depth", region)
     if depth is not None and np.any(inside & ~np.isnan(depth)):
         dv = depth[inside & ~np.isnan(depth)]
         depth_range = [round(float(dv.min()), 1), round(float(dv.max()), 1)]
+    summary["depth_range_m"] = depth_range
 
-    return {
-        "n_cells": n,
-        "area_km2": round(area_m2 / 1e6, 3),
-        "mean_power_density": round(float(np.mean(sel)), 2),
-        "max_power_density": round(float(np.max(sel)), 2),
-        "gross_mw": round(gross_w / 1e6, 3),
-        "extractable_mw": round(gross_w * efficiency / 1e6, 3),
-        "aep_gwh_yr": round(gross_w * efficiency * 8760.0 / 1e9, 3),
-        "depth_range_m": depth_range,
-    }
+    return summary
 
 
 @lru_cache(maxsize=32)
-def _area_stats_cached(ring_json: str, efficiency: float, mtime: float) -> dict | None:
-    return _area_stats(json.loads(ring_json), efficiency)
+def _area_stats_cached(
+    ring_json: str, efficiency: float, mtime: float, region: str | None = None
+) -> dict | None:
+    return _area_stats(json.loads(ring_json), efficiency, region)
 
 
-def _timeseries(lat: float, lon: float) -> dict | None:
+def _timeseries(lat: float, lon: float, region: str | None = None) -> dict | None:
     """Nearest-cell time series from results.nc."""
     try:
         from netCDF4 import Dataset
     except ImportError:
         return None
 
-    path = _results_nc_path()
+    path = _results_nc_path(region)
     if not os.path.isfile(path):
         return None
 
@@ -583,8 +635,10 @@ def _timeseries(lat: float, lon: float) -> dict | None:
 
 
 @lru_cache(maxsize=256)
-def _timeseries_cached(lat: float, lon: float, mtime: float) -> dict | None:
-    return _timeseries(lat, lon)
+def _timeseries_cached(
+    lat: float, lon: float, mtime: float, region: str | None = None
+) -> dict | None:
+    return _timeseries(lat, lon, region)
 
 
 # ---------------------------------------------------------------------------
@@ -600,9 +654,10 @@ def index():
 @app.route("/api/layers")
 def layers():
     """Metadata for every configured layer (available or not)."""
+    region = request.args.get("region")
     out = {}
     for name in LAYERS:
-        meta = _layer_metadata(name)
+        meta = _layer_metadata(name, region)
         if meta is not None:
             meta["available"] = True
         else:
@@ -612,7 +667,13 @@ def layers():
                 "available": False,
             }
         out[name] = meta
-    resp = jsonify({"layers": out, "results_nc": os.path.isfile(_results_nc_path())})
+    resp = jsonify(
+        {
+            "layers": out,
+            "results_nc": os.path.isfile(_results_nc_path(region)),
+            "region": region or "",
+        }
+    )
     resp.headers["Cache-Control"] = "public, max-age=300"
     return resp
 
@@ -620,12 +681,45 @@ def layers():
 @app.route("/api/metadata")
 def metadata():
     """Backwards-compatible metadata alias for the power layer."""
-    meta = _layer_metadata("power")
+    meta = _layer_metadata("power", request.args.get("region"))
     if meta is not None:
         meta["available"] = True
     else:
         meta = {"available": False}
     resp = jsonify(meta)
+    resp.headers["Cache-Control"] = "public, max-age=300"
+    return resp
+
+
+@app.route("/api/datasets")
+def datasets():
+    """List every servable dataset: the Python screening + TELEMAC-2D regions."""
+    items = []
+    root_bounds = _root_bounds(os.path.dirname(GEOTIFF_PATH))
+    items.append(
+        {
+            "id": "",
+            "label": "Python screening (archipelago)",
+            "engine": "python",
+            "bounds": root_bounds,
+        }
+    )
+    telemac_dir = os.path.join(OUTPUT_DIR, "telemac")
+    if os.path.isdir(telemac_dir):
+        for name in sorted(os.listdir(telemac_dir)):
+            d = os.path.join(telemac_dir, name)
+            if os.path.isdir(d) and os.path.isfile(
+                os.path.join(d, LAYERS["power"]["file"])
+            ):
+                items.append(
+                    {
+                        "id": name,
+                        "label": f"TELEMAC-2D · {name}",
+                        "engine": "telemac2d",
+                        "bounds": _root_bounds(d),
+                    }
+                )
+    resp = jsonify({"datasets": items})
     resp.headers["Cache-Control"] = "public, max-age=300"
     return resp
 
@@ -645,7 +739,7 @@ def query():
     except ValueError:
         return jsonify({"error": "invalid lat/lon"}), 400
 
-    result = _point_query(lat, lon, layer)
+    result = _point_query(lat, lon, layer, request.args.get("region"))
     if result is None:
         return jsonify({"error": "no data at this location"}), 404
     return jsonify(result)
@@ -661,12 +755,13 @@ def tile(layer: str = "power", z: int = 0, x: int = 0, y: int = 0):
         return jsonify({"error": "tile out of range"}), 404
     if layer not in LAYERS:
         return jsonify({"error": f"unknown layer: {layer}"}), 404
-    if not os.path.isfile(_layer_path(layer)):
+    region = request.args.get("region")
+    if not os.path.isfile(_layer_path(layer, region)):
         return jsonify({"error": f"layer '{layer}' not generated"}), 404
 
     try:
         tile_bytes = _render_tile_cached(
-            layer, z, x, y, _file_mtime(_layer_path(layer))
+            layer, z, x, y, _file_mtime(_layer_path(layer, region)), region
         )
     except Exception as exc:
         logger.exception(
@@ -694,7 +789,8 @@ def timeseries():
     except ValueError:
         return jsonify({"error": "invalid lat/lon"}), 400
 
-    result = _timeseries_cached(lat, lon, _file_mtime(_results_nc_path()))
+    region = request.args.get("region")
+    result = _timeseries_cached(lat, lon, _file_mtime(_results_nc_path(region)), region)
     if result is None:
         return jsonify({"error": "no time series available (run the model first)"}), 404
     return jsonify(result)
@@ -723,7 +819,8 @@ def turbine_performance():
     except ValueError:
         return jsonify({"error": "invalid lat/lon"}), 400
 
-    ts = _timeseries_cached(lat, lon, _file_mtime(_results_nc_path()))
+    region = request.args.get("region")
+    ts = _timeseries_cached(lat, lon, _file_mtime(_results_nc_path(region)), region)
     if ts is None:
         return jsonify({"error": "no time series available (run the model first)"}), 404
 
@@ -743,7 +840,7 @@ def turbine_performance():
 
 @app.route("/api/hotspots")
 def hotspots():
-    path = _hotspots_path()
+    path = _hotspots_path(request.args.get("region"))
     if not os.path.isfile(path):
         return jsonify(
             {"error": "hotspots.geojson not found (run the model first)"}
@@ -789,10 +886,12 @@ def area_stats():
     if not (0 < efficiency <= 1):
         return jsonify({"error": "efficiency must be in (0, 1]"}), 400
 
+    region = request.args.get("region")
     result = _area_stats_cached(
         json.dumps([[float(a), float(b)] for a, b in polygon]),
         efficiency,
-        _file_mtime(_layer_path("power")),
+        _file_mtime(_layer_path("power", region)),
+        region,
     )
     if result is None:
         return jsonify({"error": "power layer not available"}), 404
@@ -814,12 +913,14 @@ def resource():
     if not (0 < efficiency <= 1):
         return jsonify({"error": "efficiency must be in (0, 1]"}), 400
 
+    region = request.args.get("region")
     result = _resource_cached(
         min_power,
         depth_min or 0.0,
         depth_max or 0.0,
         efficiency,
-        _file_mtime(_layer_path("power")),
+        _file_mtime(_layer_path("power", region)),
+        region,
     )
     if result is None:
         return jsonify({"error": "power layer not available"}), 404
@@ -836,7 +937,7 @@ def download(filename: str):
     if filename not in safe_names:
         return jsonify({"error": "file not available for download"}), 404
 
-    path = os.path.join(os.path.dirname(GEOTIFF_PATH), filename)
+    path = os.path.join(_resolve_root(request.args.get("region")), filename)
     if not os.path.isfile(path):
         return jsonify({"error": f"{filename} not yet generated"}), 404
 

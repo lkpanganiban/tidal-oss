@@ -5,15 +5,10 @@ writing — exercising the same code paths that `run.py` uses in production.
 All tests use synthetic data so no external datasets are required.
 """
 
-import warnings
-
-warnings.filterwarnings(
-    "ignore", message="numpy.ndarray size changed, may indicate binary incompatibility"
-)
-
 import json
 import os
 import tempfile
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -39,6 +34,10 @@ from model.output import (
 )
 from model.solver import ShallowWaterSolver
 from model.utils import cfl_timestep, power_density, speed
+
+warnings.filterwarnings(
+    "ignore", message="numpy.ndarray size changed, may indicate binary incompatibility"
+)
 
 # ---------------------------------------------------------------------------
 # Helper: build a tiny degree-grid domain suitable for GeoTIFF output

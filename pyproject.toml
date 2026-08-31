@@ -3,74 +3,72 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "tidal-model"
+name = "tidal-web"
 version = "0.1.0"
-description = "Open-source tidal-current energy assessment workflow for the Philippine archipelago"
+description = "Tidal-current energy web visualisation (Philippine archipelago)"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
 authors = [{ name = "Ian Panganiban", email = "hi@lkpanganiban.com" }]
-keywords = ["tidal", "energy", "hydrodynamics", "shallow-water", "geospatial", "telemac"]
+keywords = ["tidal", "energy", "geospatial", "web"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Topic :: Scientific/Engineering :: Atmospheric Science",
 ]
 dependencies = [
-    "numpy>=1.24",
+    "flask>=3.0",
+    "numpy>=2.0",
     "scipy>=1.10",
     "xarray>=2023.1",
     "pyyaml>=6.0",
-    "netCDF4>=1.6",
-    "rasterio>=1.3",
     "fiona>=1.9",
     "affine>=2.4",
     "numba>=0.59",
+    "rasterio>=1.3",
+    "pillow>=10.0",
+    "gunicorn>=21.0",
+    "netCDF4>=1.6",
 ]
 
 [project.optional-dependencies]
-web = ["flask>=3.0", "pillow>=10.0", "gunicorn>=21.0"]
-notebooks = ["jupyter>=1.0", "matplotlib>=3.7"]
-dev = ["pytest>=8", "ruff>=0.5", "mypy>=1.10", "black>=24"]
+dev = [
+    "pytest>=8",
+    "ruff",
+    "mypy",
+    "black",
+]
 
 [project.scripts]
-tidal-model = "model.run:main"
 tidal-web = "web.app:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.pytest.ini_options]
-testpaths = ["src/model/tests", "src/web/tests"]
 pythonpath = ["src"]
 addopts = "-q"
-filterwarnings = [
-    "ignore:numpy.ndarray size changed:RuntimeWarning",
-]
 
 [tool.ruff]
 target-version = "py310"
 line-length = 88
 src = ["src"]
-extend-exclude = ["docs", "data", "output", "*.ipynb"]
+# Notebooks are tutorials with cell idioms (trailing ';' to suppress output,
+# inline imports) that conflict with lint rules; keep ruff focused on code.
+extend-exclude = ["*.ipynb"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM"]
-ignore = ["E501"]  # line length is enforced by the formatter (ruff format)
-
-[tool.ruff.lint.per-file-ignores]
-# Tests intentionally place a warnings.filterwarnings() call before imports
-# so they can also run standalone (without pytest).
-"src/model/tests/*.py" = ["E402"]
+ignore = ["E501"]
 
 [tool.black]
 line-length = 88
 target-version = ["py310"]
 
 [tool.mypy]
+explicit_package_bases = true
 python_version = "3.10"
 mypy_path = "src"
 ignore_missing_imports = true
-exclude = ["docs/", "data/", "output/", "build/"]
+exclude = ["output/", "build/"]

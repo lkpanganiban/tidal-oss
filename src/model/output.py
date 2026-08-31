@@ -115,18 +115,6 @@ class NetCDFStreamWriter:
             self._nc["power_density"][i, :, :] = power
         self._idx += 1
 
-    def last_state(self) -> tuple[float, np.ndarray, np.ndarray, np.ndarray]:
-        """Return (t, eta, u, v) of the most recent snapshot (for resume)."""
-        if self._idx == 0:
-            raise ValueError("No snapshots written yet")
-        i = self._idx - 1
-        return (
-            float(self._nc["time"][i]),
-            np.asarray(self._nc["eta"][i, :, :]),
-            np.asarray(self._nc["u"][i, :, :]),
-            np.asarray(self._nc["v"][i, :, :]),
-        )
-
     def close(self):
         if self._nc is not None:
             self._nc.close()
@@ -292,7 +280,7 @@ def write_raster_geotiff(
     values: np.ndarray,
     path: str,
     description: str,
-    nodata: float | None = None,
+    nodata: float | None = float("nan"),
 ):
     """Write any cell-centre field to a Cloud-Optimised GeoTIFF.
 
@@ -306,7 +294,9 @@ def write_raster_geotiff(
     description : str
         Band description / long name.
     nodata : float or None
-        No-data marker (``None`` = no nodata tag).
+        No-data marker.  Defaults to ``NaN`` so GIS tools (QGIS, GDAL) render
+        masked regions as transparent rather than as spurious data.  Pass ``None``
+        to omit the tag.
     """
     try:
         import rasterio
@@ -328,6 +318,11 @@ def write_raster_geotiff(
     ny, nx = values.shape
     transform = from_bounds(lon_min, lat_min, lon_max, lat_max, nx, ny)
 
+    # grid rows run south-to-north (row 0 = lat_min) while GeoTIFFs are
+    # north-up (row 0 = lat_max); flip rows so the raster matches the
+    # from_bounds transform.
+    data = values[::-1, :]
+
     kwargs = dict(
         mode="w",
         driver="COG",
@@ -343,7 +338,7 @@ def write_raster_geotiff(
         kwargs["nodata"] = nodata
 
     with rasterio.open(path, **kwargs) as dst:
-        dst.write(values.astype(np.float32), 1)
+        dst.write(data.astype(np.float32), 1)
         dst.set_band_description(1, description)
 
 

@@ -1,0 +1,14 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": { "type": "Point", "coordinates": [125.50, 9.85] },
+      "properties": {
+        "name": "Surigao Strait",
+        "power_density_Wm2": 2253.0,
+        "depth_m": 9.0
+      }
+    }
+  ]
+}

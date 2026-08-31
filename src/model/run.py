@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import os
 from argparse import ArgumentParser
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -23,7 +24,11 @@ from .bathymetry import (
     load_gebco,
     regrid_bathymetry,
 )
-from .config import load_config, validate_config
+from .config import TIDAL_SOURCES, load_config, validate_config
+
+if TYPE_CHECKING:
+    from .telemac.case import PreparedCase
+    from .telemac.hotspots import HotspotRegion
 from .forcing import (
     build_tidal_boundary,
     make_synthetic_tidal_boundary,
@@ -162,16 +167,7 @@ def _build_tidal_boundary(grid: StructuredGrid, tidal: dict):
             constituents=tidal.get("constituents"),
         ), tidal_source
 
-    if tidal_source in (
-        "fes2014",
-        "fes",
-        "tpxo9",
-        "tpxo",
-        "got",
-        "got4.10c",
-        "got4.10",
-        "got410c",
-    ):
+    if tidal_source in TIDAL_SOURCES and tidal_source != "synthetic":
         tidal_path = tidal.get("path")
         if not tidal_path:
             raise ValueError(
@@ -187,6 +183,167 @@ def _build_tidal_boundary(grid: StructuredGrid, tidal: dict):
         return build_tidal_boundary(consts), tidal_source
 
     raise ValueError(f"Unknown tidal_forcing.source: {tidal_source}")
+
+
+def build_screening_grid(config: dict):
+    """Public wrapper around :func:`_build_grid` returning the structured grid."""
+    return _build_grid(config)[0]
+
+
+def run_model(config: dict, resume_from: str | None = None) -> str:
+    """Dispatch to the selected engine (``python`` or ``telemac2d``)."""
+    engine = config.get("engine", {}).get("name", "python")
+    if engine == "telemac2d":
+        return run_telemac_pipeline(config, resume_from)
+    if engine not in ("python", "telemac2d"):
+        raise ValueError(f"engine.name '{engine}' not supported (python | telemac2d)")
+    return run(config, resume_from)
+
+
+def run_telemac_pipeline(
+    config: dict, resume_from: str | None = None, *, dry_run: bool = False
+) -> str:
+    """Screen (if needed), cluster hotspots, refine with TELEMAC-2D, post-process.
+
+    The screening model is used to locate energetic regions; each region becomes
+    a self-contained TELEMAC case run inside the public Docker image.  Canonical
+    outputs for every region are written to ``<output>/telemac/<region_id>/`` so
+    the existing Flask/MapLibre stack can visualise any refinement independently
+    of the archipelago-wide screening view.
+    """
+    from .telemac.postprocess import postprocess_case
+    from .telemac.runner import run_case
+
+    configure_logging(config.get("logging", {}).get("level", "INFO"))
+
+    out_cfg = config["output"]
+    out_dir = out_cfg["dir"]
+    os.makedirs(out_dir, exist_ok=True)
+
+    hotspots_path = os.path.join(
+        out_dir, out_cfg.get("hotspots_geojson", "hotspots.geojson")
+    )
+    if not os.path.isfile(hotspots_path):
+        logger.info(
+            "No screening hotspots found at %s — running Python screening first",
+            hotspots_path,
+        )
+        run(config, resume_from)
+
+    grid = build_screening_grid(config)
+    cases_dir = config.get("telemac2d", {}).get("cases_dir", "cases")
+    prepared = prepare_regions(config, grid, hotspots_path, cases_dir)
+
+    telemac_cfg = config.get("telemac2d", {})
+    docker = bool(telemac_cfg.get("docker", True))
+    last_out = None
+    for region, pc in prepared:
+        run_case(pc.case_dir, docker=docker, dry_run=dry_run)
+        region_out = os.path.join(out_dir, "telemac", region.id)
+        summary = postprocess_case(pc.case_dir, config, region_out, region_id=region.id)
+        recon = summary.get("reconciliation", {})
+        if recon.get("screening_max_power"):
+            logger.info(
+                "  %s [%s]: TELEMAC max power %.0f W/m² vs screening %.0f W/m² "
+                "(%.2fx) — reconciliation.json written",
+                region.id,
+                getattr(region, "axis", "?"),
+                recon.get("telemac_max_power", 0.0),
+                recon["screening_max_power"],
+                recon.get("ratio_telemac_to_screening", float("nan")),
+            )
+        last_out = region_out
+
+    if telemac_cfg.get("postprocess", {}).get("write_to_output_root") and prepared:
+        assert last_out is not None  # a non-empty prepared list implies a run
+        _copy_region_to_output_root(last_out, out_dir, out_cfg)
+
+    logger.info(
+        "TELEMAC refinement complete. Region outputs under %s",
+        os.path.join(out_dir, "telemac"),
+    )
+    return last_out or out_dir
+
+
+def prepare_regions(
+    config: dict,
+    grid,
+    hotspots_path: str,
+    cases_dir: str,
+) -> list[tuple[HotspotRegion, PreparedCase]]:
+    """Cluster *hotspots_path* into refinement regions and write each case dir.
+
+    Shared by the CLI and the in-process pipeline so both paths agree on how
+    regions are selected (explicit ``telemac2d.mesh.boundary.sites`` take
+    precedence over inferred hotspot clustering) and how each case is assembled.
+    Returns ``(region, PreparedCase)`` pairs.  *hotspots_path* must already
+    exist (callers decide whether to synthesise it first).
+    """
+    from .telemac.case import prepare_case
+    from .telemac.hotspots import (
+        cluster_hotspots,
+        regions_from_sites,
+        save_regions,
+    )
+
+    telemac_cfg = config.get("telemac2d", {})
+    mesh_cfg = telemac_cfg.get("mesh", {})
+    boundary_cfg = mesh_cfg.get("boundary", {})
+
+    # Explicit strait-site definitions (config) take precedence over inferred
+    # hotspot clustering — they let the analyst align each refined domain with
+    # the actual channel and guarantee both liquid boundaries reach open water.
+    sites = boundary_cfg.get("sites")
+    if sites:
+        regions = regions_from_sites(sites)
+        logger.info("Using %d explicit strait site(s) from config", len(regions))
+    else:
+        regions = cluster_hotspots(
+            hotspots_path,
+            cluster_radius_km=float(boundary_cfg.get("cluster_radius_km", 15.0)),
+            margin_km=float(boundary_cfg.get("margin_km", 10.0)),
+            max_regions=int(boundary_cfg.get("max_regions", 3)),
+            channel_buffer_km=boundary_cfg.get("channel_buffer_km"),
+        )
+    os.makedirs(cases_dir, exist_ok=True)
+    save_regions(regions, os.path.join(cases_dir, "regions.json"))
+    logger.info("Prepared %d refinement region(s)", len(regions))
+
+    tidal = config.get("tidal_forcing", {})
+    prepared = []
+    for region in regions:
+        supplied = (
+            mesh_cfg.get("supplied_mesh")
+            if mesh_cfg.get("source") == "supplied"
+            else None
+        )
+        try:
+            pc = prepare_case(
+                region, config, tidal, cases_dir, grid=grid, supplied_mesh=supplied
+            )
+        except ValueError as exc:
+            # An unrefinable region (e.g. no wet path between open edges)
+            # should not abort the remaining refinements.
+            logger.warning("Skipping %s: %s", region.id, exc)
+            continue
+        prepared.append((region, pc))
+    return prepared
+
+
+def _copy_region_to_output_root(region_out: str, out_dir: str, out_cfg: dict) -> None:
+    import shutil
+
+    for key in (
+        "results_nc",
+        "final_geotiff",
+        "max_speed_geotiff",
+        "bathymetry_geotiff",
+        "distance_geotiff",
+        "hotspots_geojson",
+    ):
+        src = os.path.join(region_out, os.path.basename(out_cfg.get(key, "")))
+        if os.path.isfile(src):
+            shutil.copyfile(src, os.path.join(out_dir, os.path.basename(src)))
 
 
 def run(config: dict, resume_from: str | None = None) -> str:
@@ -425,6 +582,11 @@ def main():
         metavar="RESULTS_NC",
         help="Continue from the last snapshot in an existing results.nc",
     )
+    parser.add_argument(
+        "--engine",
+        default=None,
+        help="Override engine: python (default) | telemac2d",
+    )
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -442,9 +604,11 @@ def main():
         config.setdefault("domain", {})["resolution_km"] = args.resolution_km
     if args.tidal_source:
         config.setdefault("tidal_forcing", {})["source"] = args.tidal_source
+    if args.engine:
+        config.setdefault("engine", {})["name"] = args.engine
 
-    out_path = run(config, resume_from=args.resume)
-    print(f"\nDone. GeoTIFF written to: {out_path}")
+    out_path = run_model(config, resume_from=args.resume)
+    print(f"\nDone. Output written to: {out_path}")
 
 
 if __name__ == "__main__":

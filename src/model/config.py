@@ -9,7 +9,6 @@ fast at startup instead of mid-simulation.
 from __future__ import annotations
 
 import os
-from pathlib import Path
 
 import yaml
 
@@ -99,6 +98,22 @@ def validate_config(config: dict) -> None:
     if not tidal.get("constituents"):
         raise ValueError("tidal_forcing.constituents must list at least one harmonic")
 
+    engine = config.get("engine", {})
+    if isinstance(engine, dict):
+        name = engine.get("name", "python")
+        if name not in ("python", "telemac2d"):
+            raise ValueError(
+                f"engine.name '{name}' not supported. Expected: python | telemac2d"
+            )
+        if name == "telemac2d" and "telemac2d" not in config:
+            raise ValueError("telemac2d section is required when engine.name=telemac2d")
+        if name == "telemac2d":
+            telemac_cfg = config["telemac2d"]
+            if not telemac_cfg.get("image"):
+                raise ValueError(
+                    "telemac2d.image must pin a public TELEMAC Docker image"
+                )
+
     out = config["output"]
     if out.get("hotspot_threshold", 0) <= 0:
         raise ValueError("output.hotspot_threshold must be > 0")
@@ -112,8 +127,3 @@ def validate_config(config: dict) -> None:
     # Note: a bathymetry.path that points at a missing file is NOT an error
     # here — run() logs a warning and falls back to the synthetic test grid,
     # which is the documented no-data behaviour (see README).
-
-
-def data_dir() -> Path:
-    """Absolute path to the repository ``data/`` directory (parent of src)."""
-    return Path(__file__).resolve().parent.parent.parent / "data"
