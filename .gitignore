@@ -17,6 +17,10 @@ build/
 .DS_Store
 ._*
 
+# --- Jupyter ---
+.ipynb_checkpoints/
+output-foss/
+
 # --- IDE ---
 .vscode/
 .idea/

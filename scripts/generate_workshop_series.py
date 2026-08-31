@@ -387,6 +387,7 @@ def n_concept() -> list[dict]:
             "same summation the model performs at every open-boundary cell.\n"
         ),
         code(
+            "%matplotlib inline\n"
             "import numpy as np\n"
             "import matplotlib.pyplot as plt\n"
             "\n"
@@ -1672,6 +1673,7 @@ def n_web() -> list[dict]:
             "responses.\n"
         ),
         code(
+            "%matplotlib inline\n"
             "import json\n"
             "import urllib.request\n"
             "\n"
