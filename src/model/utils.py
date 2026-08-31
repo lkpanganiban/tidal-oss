@@ -4,17 +4,7 @@ Provides Coriolis parameter, stability criteria, array indexing helpers,
 and interpolation routines used across the model package.
 """
 
-from typing import overload
-
 import numpy as np
-
-
-@overload
-def coriolis(lat: np.ndarray) -> np.ndarray: ...
-
-
-@overload
-def coriolis(lat: float) -> float: ...
 
 
 def coriolis(lat: np.ndarray | float) -> np.ndarray | float:

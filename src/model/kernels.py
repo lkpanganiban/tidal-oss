@@ -23,16 +23,31 @@ import numpy as np
 try:  # numba is optional; the solver falls back to pure NumPy without it
     from numba import njit
 
+    _NUMBA_AVAILABLE = True
+
 except ImportError:  # pragma: no cover - exercised only on numba-less installs
-    njit = None  # type: ignore[assignment]
+    _NUMBA_AVAILABLE = False
+
+    def njit(*args, **kwargs):  # type: ignore[no-redef,misc]
+        """No-op decorator so the module imports cleanly without numba."""
+
+        def _identity(fn):
+            return fn
+
+        return _identity
 
 
 def numba_available() -> bool:
     """True if numba can be used for the fused kernel."""
-    return njit is not None
+    return _NUMBA_AVAILABLE
 
 
-@njit(cache=True, fastmath=False)
+# Note: no ``cache=True`` — numba's on-disk cache stores the kernel's module
+# name, so the same function imported as ``model.kernels`` (editable install /
+# notebook) and as ``src.model.kernels`` (``python -m src.model.run``) would
+# load each other's cache and fail to ``import src``.  In-memory JIT compiles
+# once per process (~1 s) and is immune to the two import styles.
+@njit(fastmath=False)
 def _step_forward_backward(
     eta,
     u,

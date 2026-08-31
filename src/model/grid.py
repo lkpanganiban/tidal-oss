@@ -162,7 +162,7 @@ class StructuredGrid:
         open_boundary[:, 0] = mask[:, 0]
         open_boundary[:, -1] = mask[:, -1]
 
-        f_arr = coriolis(lat_2d)
+        f_arr = np.asarray(coriolis(lat_2d), dtype=np.float64)
 
         h_u = interpolate_to_u(h)
         h_v = interpolate_to_v(h)

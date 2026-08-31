@@ -255,6 +255,7 @@ def run_telemac_pipeline(
         last_out = region_out
 
     if telemac_cfg.get("postprocess", {}).get("write_to_output_root") and prepared:
+        assert last_out is not None  # a non-empty prepared list implies a run
         _copy_region_to_output_root(last_out, out_dir, out_cfg)
 
     logger.info(

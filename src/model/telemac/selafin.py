@@ -118,12 +118,12 @@ def compute_ipobo(ikle: np.ndarray, npoints: int | None = None) -> np.ndarray:
     if npoints is None:
         npoints = int(ikle.max())
     ndp = ikle.shape[1]
-    edges = []
+    edge_pairs = []
     for k in range(ndp):
         a = ikle[:, k]
         b = ikle[:, (k + 1) % ndp]
-        edges.append(np.stack([np.minimum(a, b), np.maximum(a, b)], axis=1))
-    edges = np.concatenate(edges, axis=0)
+        edge_pairs.append(np.stack([np.minimum(a, b), np.maximum(a, b)], axis=1))
+    edges = np.concatenate(edge_pairs, axis=0)
     uniq, counts = np.unique(edges, axis=0, return_counts=True)
     boundary_nodes = uniq[counts == 1]
     node_set = np.unique(boundary_nodes)

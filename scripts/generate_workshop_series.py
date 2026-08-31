@@ -1423,7 +1423,7 @@ def n_workflow() -> list[dict]:
         code(
             "for root in (Path('output/telemac'), Path('../../output/telemac')):\n"
             "    if root.is_dir():\n"
-            "        for region in sorted(root.iterdir()):\n"
+            "        for region in sorted(r for r in root.iterdir() if r.is_dir()):\n"
             "            files = sorted(p.name for p in region.iterdir() if p.is_file())\n"
             "            print(f'{region.name}: {files}')\n"
             "        break\n"
@@ -1580,6 +1580,7 @@ def n_model() -> list[dict]:
             "`output/workshop-demo/` (gitignored).\n"
         ),
         code(
+            "from pathlib import Path\n"
             "from model.output import (\n"
             "    write_mean_power_geotiff,\n"
             "    write_raster_geotiff,\n"

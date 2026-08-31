@@ -8,10 +8,6 @@ the right boundary is a closed wall.  Validates:
 
 import warnings
 
-warnings.filterwarnings(
-    "ignore", message="numpy.ndarray size changed, may indicate binary incompatibility"
-)
-
 import numpy as np
 
 try:
@@ -22,6 +18,10 @@ except ImportError:
 from model.forcing import ASTRO_FREQUENCIES
 from model.grid import StructuredGrid
 from model.solver import ShallowWaterSolver
+
+warnings.filterwarnings(
+    "ignore", message="numpy.ndarray size changed, may indicate binary incompatibility"
+)
 
 
 def test_tidal_channel_develops_flow():

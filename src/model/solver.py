@@ -330,7 +330,7 @@ class ShallowWaterSolver:
 
     def _advection_u(self) -> np.ndarray:
         """Advection at u-points: -(u du/dx + v du/dy)."""
-        adv = np.zeros_like(self.u)
+        adv: np.ndarray = np.zeros_like(self.u)
         ny, nx1 = self.u.shape
         nx = nx1 - 1
 
@@ -353,7 +353,7 @@ class ShallowWaterSolver:
 
     def _advection_v(self) -> np.ndarray:
         """Advection at v-points: -(u dv/dx + v dv/dy)."""
-        adv = np.zeros_like(self.v)
+        adv: np.ndarray = np.zeros_like(self.v)
         ny1, nx = self.v.shape
         ny = ny1 - 1
 

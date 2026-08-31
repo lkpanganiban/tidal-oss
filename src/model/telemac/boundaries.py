@@ -282,7 +282,11 @@ def _harmonic_series(
                     "tidal_forcing.path is required for non-synthetic runs"
                 )
             consts = read_tidal_constituents(
-                source, tidal_path, const_names, [float(rep_lon)], [float(rep_lat)]
+                source,
+                tidal_path,
+                const_names,
+                np.array([float(rep_lon)]),
+                np.array([float(rep_lat)]),
             )
             bnd = build_tidal_boundary(consts)
         lag = _phase_lag_seconds(
@@ -446,7 +450,7 @@ def generate_boundaries(
                 )
                 for col, i in enumerate(fb_idx):
                     p_series[:, i] = fb[:, col]
-                if thompson:
+                if thompson and uv_series is not None:
                     # No parent flow state for these points — leave their
                     # velocity columns at rest.
                     for i in fb_idx:
